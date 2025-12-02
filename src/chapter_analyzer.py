@@ -1,0 +1,292 @@
+"""Chapter analysis component for the Meeting Video Chapter Tool.
+
+This module provides functionality to analyze transcripts and identify
+logical chapter boundaries using Google's Gemini API.
+"""
+
+import re
+import json
+from typing import List
+import google.generativeai as genai
+
+from src.chapter import Chapter, validate_chapter_list
+from src.transcript import Transcript
+from src.errors import DependencyError, ValidationError, ProcessingError
+
+
+class ChapterAnalyzer:
+    """Analyzes transcripts to identify chapter boundaries using Gemini API.
+    
+    Attributes:
+        api_key: Google Gemini API key
+        model_name: Name of the Gemini model to use
+    """
+    
+    def __init__(self, api_key: str, model_name: str = "gemini-flash-latest"):
+        """Initialize the ChapterAnalyzer.
+        
+        Args:
+            api_key: Google Gemini API key
+            model_name: Name of the Gemini model to use (default: gemini-flash-latest)
+            
+        Raises:
+            ValidationError: If API key is missing or invalid
+        """
+        if not api_key or not api_key.strip():
+            raise ValidationError(
+                "Gemini API key is required",
+                {"operation": "ChapterAnalyzer initialization"}
+            )
+        
+        self.api_key = api_key
+        self.model_name = model_name
+        
+        # Configure the Gemini API
+        try:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel(self.model_name)
+        except Exception as e:
+            raise DependencyError(
+                "Failed to initialize Gemini API",
+                {
+                    "dependency": "google-generativeai",
+                    "model": self.model_name,
+                    "cause": str(e)
+                }
+            )
+    
+    def analyze(self, transcript: Transcript) -> List[Chapter]:
+        """Analyze a transcript and identify chapter boundaries.
+        
+        Args:
+            transcript: The transcript to analyze
+            
+        Returns:
+            List of Chapter objects with timestamps and titles
+            
+        Raises:
+            ValidationError: If the transcript is empty or invalid
+            DependencyError: If the Gemini API call fails
+            ProcessingError: If chapter parsing or validation fails
+        """
+        # Validate transcript
+        if not transcript.segments:
+            raise ValidationError(
+                "Cannot analyze empty transcript",
+                {"operation": "chapter identification"}
+            )
+        
+        # Format the prompt
+        prompt = self.format_prompt(transcript)
+        
+        # Call Gemini API
+        try:
+            response = self.model.generate_content(prompt)
+            
+            if not response or not response.text:
+                raise DependencyError(
+                    "Gemini API returned empty response",
+                    {
+                        "dependency": "Gemini API",
+                        "model": self.model_name
+                    }
+                )
+            
+            response_text = response.text
+            
+        except Exception as e:
+            # Check for rate limit errors
+            error_str = str(e).lower()
+            if "rate limit" in error_str or "quota" in error_str:
+                raise DependencyError(
+                    "Gemini API rate limit exceeded",
+                    {
+                        "dependency": "Gemini API",
+                        "model": self.model_name,
+                        "cause": str(e),
+                        "suggestion": "Please wait a few moments and try again"
+                    }
+                )
+            else:
+                raise DependencyError(
+                    "Gemini API call failed",
+                    {
+                        "dependency": "Gemini API",
+                        "model": self.model_name,
+                        "cause": str(e)
+                    }
+                )
+        
+        # Parse the response
+        chapters = self.parse_response(response_text)
+        
+        # Validate chapter structure
+        try:
+            validate_chapter_list(chapters)
+        except ValueError as e:
+            raise ProcessingError(
+                "Generated chapters have invalid structure",
+                {
+                    "operation": "chapter validation",
+                    "cause": str(e)
+                }
+            )
+        
+        return chapters
+    
+    def format_prompt(self, transcript: Transcript) -> str:
+        """Format a transcript into a prompt for Gemini.
+        
+        Args:
+            transcript: The transcript to format
+            
+        Returns:
+            Formatted prompt string
+        """
+        # Build the transcript text with timestamps
+        transcript_text = ""
+        for segment in transcript.segments:
+            timestamp_str = self._format_timestamp(segment.start_time)
+            transcript_text += f"[{timestamp_str}] {segment.text}\n"
+        
+        prompt = f"""Analyze the following meeting transcript and identify logical chapter boundaries.
+For each chapter, provide:
+1. The timestamp (in seconds) where the chapter begins
+2. A concise, descriptive title for the chapter
+
+The chapters should represent major topic changes or sections in the meeting.
+Aim for 3-8 chapters depending on the content length and structure.
+
+Return the chapters as a JSON array with this exact format:
+[
+  {{"timestamp": 0.0, "title": "Introduction"}},
+  {{"timestamp": 120.5, "title": "Main Discussion"}},
+  {{"timestamp": 300.0, "title": "Conclusion"}}
+]
+
+IMPORTANT: Return ONLY the JSON array, no other text or explanation.
+
+Transcript:
+{transcript_text}
+"""
+        return prompt
+    
+    def parse_response(self, response: str) -> List[Chapter]:
+        """Parse Gemini API response into Chapter objects.
+        
+        Args:
+            response: The response text from Gemini API
+            
+        Returns:
+            List of Chapter objects
+            
+        Raises:
+            ProcessingError: If the response cannot be parsed
+        """
+        # Try to extract JSON from the response
+        # Sometimes the model includes markdown code blocks
+        json_match = re.search(r'```(?:json)?\s*(\[.*\])\s*```', response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find a JSON array directly (greedy match to get full array)
+            json_match = re.search(r'\[.*\]', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                raise ProcessingError(
+                    "Could not find JSON array in Gemini response",
+                    {
+                        "operation": "chapter parsing",
+                        "response_preview": response[:200]
+                    }
+                )
+        
+        # Parse the JSON
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError as e:
+            raise ProcessingError(
+                "Failed to parse JSON from Gemini response",
+                {
+                    "operation": "chapter parsing",
+                    "cause": str(e),
+                    "json_preview": json_str[:200]
+                }
+            )
+        
+        # Validate that we got a list
+        if not isinstance(data, list):
+            raise ProcessingError(
+                "Expected JSON array from Gemini, got different type",
+                {
+                    "operation": "chapter parsing",
+                    "type": type(data).__name__
+                }
+            )
+        
+        # Convert to Chapter objects
+        chapters = []
+        for i, item in enumerate(data):
+            if not isinstance(item, dict):
+                raise ProcessingError(
+                    f"Chapter {i} is not a JSON object",
+                    {
+                        "operation": "chapter parsing",
+                        "chapter_index": i
+                    }
+                )
+            
+            if "timestamp" not in item:
+                raise ProcessingError(
+                    f"Chapter {i} missing 'timestamp' field",
+                    {
+                        "operation": "chapter parsing",
+                        "chapter_index": i
+                    }
+                )
+            
+            if "title" not in item:
+                raise ProcessingError(
+                    f"Chapter {i} missing 'title' field",
+                    {
+                        "operation": "chapter parsing",
+                        "chapter_index": i
+                    }
+                )
+            
+            try:
+                timestamp = float(item["timestamp"])
+                title = str(item["title"])
+                chapter = Chapter(timestamp=timestamp, title=title)
+                chapters.append(chapter)
+            except (ValueError, TypeError) as e:
+                raise ProcessingError(
+                    f"Invalid data in chapter {i}",
+                    {
+                        "operation": "chapter parsing",
+                        "chapter_index": i,
+                        "cause": str(e)
+                    }
+                )
+        
+        if not chapters:
+            raise ProcessingError(
+                "No chapters found in Gemini response",
+                {"operation": "chapter parsing"}
+            )
+        
+        return chapters
+    
+    def _format_timestamp(self, seconds: float) -> str:
+        """Format seconds as MM:SS timestamp.
+        
+        Args:
+            seconds: Time in seconds
+            
+        Returns:
+            Formatted timestamp string
+        """
+        minutes = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{minutes:02d}:{secs:02d}"

@@ -1,0 +1,63 @@
+# Environment configuration
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Model cache and downloaded models
+.cache/
+models/
+*.pt
+*.bin
+*.safetensors
+
+# Hugging Face transformers cache
+transformers_cache/
+
+# Test outputs
+.pytest_cache/
+.hypothesis/
+htmlcov/
+.coverage
+*.cover
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output files
+output/
+*.mp3
+*.txt
+*.srt
+*_chaptered.mkv
+*_chaptered.srt
+*_transcript.json
+ffmetadata_*.txt
+
+# Logs
+*.log
+
+# Temporary test files
+test_*.py
+example_*.py
+*_demo.py
+FEATURE_DEMO.md
+SUBTITLE_FEATURE.md

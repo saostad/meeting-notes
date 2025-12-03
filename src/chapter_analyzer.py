@@ -170,6 +170,7 @@ Return the chapters as a JSON array with this exact format:
   {{"timestamp": 300.0, "title": "Conclusion"}}
 ]
 
+NOTE: Ensure to keep the timestamp in seconds format. DO NOT CONVERT TO MINUTES!
 IMPORTANT: Return ONLY the JSON array, no other text or explanation.
 
 Transcript:

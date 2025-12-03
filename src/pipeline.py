@@ -110,13 +110,26 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         
         # Step 3: Chapter Identification
         result.step_failed = "chapter identification"
-        analyzer = ChapterAnalyzer(
-            api_key=config.gemini_api_key,
-            model_name=config.gemini_model
-        )
-        chapters = analyzer.analyze(transcript, save_raw_response=str(chapters_raw_path))
-        result.chapters = chapters
-        result.chapters_file = str(chapters_raw_path)
+        if config.skip_existing and chapters_raw_path.exists():
+            # Reuse existing chapters file
+            analyzer = ChapterAnalyzer(
+                api_key=config.gemini_api_key,
+                model_name=config.gemini_model
+            )
+            with open(chapters_raw_path, 'r', encoding='utf-8') as f:
+                raw_response = f.read()
+            chapters = analyzer.parse_response(raw_response)
+            result.chapters = chapters
+            result.chapters_file = str(chapters_raw_path)
+            warnings.append(f"Reusing existing chapters file: {chapters_raw_path}")
+        else:
+            analyzer = ChapterAnalyzer(
+                api_key=config.gemini_api_key,
+                model_name=config.gemini_model
+            )
+            chapters = analyzer.analyze(transcript, save_raw_response=str(chapters_raw_path))
+            result.chapters = chapters
+            result.chapters_file = str(chapters_raw_path)
         
         # Step 4: Chapter Merging
         result.step_failed = "chapter merging"
@@ -131,8 +144,13 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         # Step 5: Generate Subtitle File
         # Generate SRT subtitle file from transcript for VLC and other players
         result.step_failed = "subtitle generation"
-        transcript.to_srt(str(subtitle_path))
-        result.subtitle_file = str(subtitle_path)
+        if config.skip_existing and subtitle_path.exists():
+            # Reuse existing subtitle file
+            result.subtitle_file = str(subtitle_path)
+            warnings.append(f"Reusing existing subtitle file: {subtitle_path}")
+        else:
+            transcript.to_srt(str(subtitle_path))
+            result.subtitle_file = str(subtitle_path)
         
         # Pipeline completed successfully
         result.success = True

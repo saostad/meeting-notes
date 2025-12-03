@@ -52,6 +52,11 @@ output/
 *_transcript.json
 ffmetadata_*.txt
 
+# Keep fonts directory but ignore temporary files
+!fonts/
+fonts/*.zip
+fonts/temp/
+
 # Logs
 *.log
 

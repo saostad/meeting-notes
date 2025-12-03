@@ -26,12 +26,14 @@ class Config:
         gemini_model: Name of the Gemini model to use
         output_dir: Directory where generated files will be saved
         skip_existing: Whether to skip regenerating existing files
+        overlay_chapter_titles: Whether to overlay chapter titles on the video
     """
     gemini_api_key: str
     whisper_model: str = "openai/whisper-large-v3-turbo"
     gemini_model: str = "gemini-flash-latest"
     output_dir: Optional[str] = None
     skip_existing: bool = False
+    overlay_chapter_titles: bool = False
     
     @classmethod
     def load(cls, env_file: str = ".env") -> "Config":
@@ -59,9 +61,11 @@ class Config:
         gemini_model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
         output_dir = os.getenv("OUTPUT_DIR")
         skip_existing_str = os.getenv("SKIP_EXISTING", "false").lower()
+        overlay_chapter_titles_str = os.getenv("OVERLAY_CHAPTER_TITLES", "false").lower()
         
-        # Parse boolean value
+        # Parse boolean values
         skip_existing = skip_existing_str in ("true", "1", "yes", "on")
+        overlay_chapter_titles = overlay_chapter_titles_str in ("true", "1", "yes", "on")
         
         # Create config instance
         config = cls(
@@ -69,7 +73,8 @@ class Config:
             whisper_model=whisper_model,
             gemini_model=gemini_model,
             output_dir=output_dir,
-            skip_existing=skip_existing
+            skip_existing=skip_existing,
+            overlay_chapter_titles=overlay_chapter_titles
         )
         
         # Validate configuration

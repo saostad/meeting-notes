@@ -109,6 +109,7 @@ Configuration is loaded from the `.env` file or environment variables. Environme
 | `WHISPER_MODEL` | No | `openai/whisper-large-v3-turbo` | Whisper model to use for transcription |
 | `OUTPUT_DIR` | No | Same as input file | Directory where generated files will be saved |
 | `SKIP_EXISTING` | No | `false` | Skip regenerating files that already exist |
+| `OVERLAY_CHAPTER_TITLES` | No | `false` | Overlay chapter titles on video (top-right corner) |
 
 ### Example .env File
 
@@ -123,6 +124,9 @@ WHISPER_MODEL=openai/whisper-large-v3-turbo
 # Optional: Output configuration
 OUTPUT_DIR=./output
 SKIP_EXISTING=false
+
+# Optional: Video overlay configuration
+OVERLAY_CHAPTER_TITLES=false
 ```
 
 ## Usage
@@ -303,6 +307,18 @@ Verify: `ffmpeg -version`
   - **VLC**: Subtitle → Add Subtitle File
   - **mpv**: Use `--sub-file=meeting_chaptered.srt` flag
 - Check subtitle encoding: the file should be UTF-8 encoded
+
+#### Chapter Title Overlays Not Working
+
+**Cause**: Font issues or ffmpeg configuration problems.
+
+**Solution**:
+- The tool includes OpenSans.ttf font in the `fonts/` directory for cross-platform compatibility
+- Font detection tries multiple paths: project fonts → system fonts → ffmpeg default
+- On Windows: Uses fonts from `C:/Windows/Fonts/`
+- On macOS: Uses fonts from `/System/Library/Fonts/` and `/Library/Fonts/`
+- On Linux: Uses fonts from `/usr/share/fonts/`
+- If overlays still don't work, set `OVERLAY_CHAPTER_TITLES=false` to disable them
 
 #### "Permission Denied" Errors
 

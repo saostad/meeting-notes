@@ -25,6 +25,7 @@ class ChapterMerger:
     def __init__(self):
         """Initialize the ChapterMerger and verify ffmpeg is available."""
         self._verify_ffmpeg()
+        self._font_path = self._find_font()
     
     def _verify_ffmpeg(self) -> None:
         """Verify that ffmpeg is installed and accessible.
@@ -121,7 +122,7 @@ class ChapterMerger:
                 }
             )
     
-    def merge(self, mkv_path: str, chapters: List[Chapter], output_path: Optional[str] = None) -> str:
+    def merge(self, mkv_path: str, chapters: List[Chapter], output_path: Optional[str] = None, overlay_titles: bool = False) -> str:
         """Embed chapter metadata into MKV file.
         
         Args:
@@ -129,6 +130,7 @@ class ChapterMerger:
             chapters: List of Chapter objects to embed
             output_path: Optional path for the output MKV file.
                         If not provided, saves to same directory with '_chaptered' suffix
+            overlay_titles: Whether to overlay chapter titles on the video (top-right corner)
         
         Returns:
             Path to the output MKV file with embedded chapters
@@ -181,21 +183,44 @@ class ChapterMerger:
             # Generate metadata file
             metadata_path = self.create_metadata_file(chapters)
             
-            # Merge chapters using ffmpeg
-            result = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-i", str(mkv_path),
-                    "-i", metadata_path,
-                    "-map_metadata", "1",
-                    "-codec", "copy",
-                    "-y",  # Overwrite output file
-                    str(temp_output)
-                ],
-                capture_output=True,
-                text=True,
-                check=False
-            )
+            # Build ffmpeg command based on overlay option
+            if overlay_titles:
+                # Create video filter for chapter title overlays
+                filter_complex = self._create_overlay_filter(chapters)
+                
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-i", str(mkv_path),
+                        "-i", metadata_path,
+                        "-filter_complex", filter_complex,
+                        "-map", "[v]",      # Map the filtered video output
+                        "-map", "0:a",      # Map the original audio
+                        "-map_metadata", "1",
+                        "-c:a", "copy",     # Copy audio without re-encoding
+                        "-y",               # Overwrite output file
+                        str(temp_output)
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+            else:
+                # Simple chapter merge without overlays
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-i", str(mkv_path),
+                        "-i", metadata_path,
+                        "-map_metadata", "1",
+                        "-codec", "copy",
+                        "-y",  # Overwrite output file
+                        str(temp_output)
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
             
             # Check if ffmpeg succeeded
             if result.returncode != 0:
@@ -258,3 +283,100 @@ class ChapterMerger:
                     os.unlink(metadata_path)
                 except Exception:
                     pass  # Best effort cleanup
+    
+    def _create_overlay_filter(self, chapters: List[Chapter]) -> str:
+        """Create ffmpeg filter for overlaying chapter titles on video.
+        
+        Args:
+            chapters: List of Chapter objects to create overlays for
+            
+        Returns:
+            ffmpeg filter_complex string for chapter title overlays
+        """
+        if not chapters:
+            return "[0:v]copy[v]"
+        
+        # Create a single drawtext filter that handles all chapters
+        # We'll create one drawtext filter per chapter and chain them
+        current_label = "[0:v]"
+        filter_parts = []
+        
+        for i, chapter in enumerate(chapters):
+            # Calculate start and end times for this chapter
+            start_time = chapter.timestamp
+            if i + 1 < len(chapters):
+                end_time = chapters[i + 1].timestamp
+            else:
+                # For the last chapter, show until end of video
+                end_time = start_time + 3600  # 1 hour max
+            
+            # Escape special characters in title for ffmpeg
+            escaped_title = chapter.title.replace("'", "\\'").replace(":", "\\:")
+            
+            # Output label for this filter
+            if i == len(chapters) - 1:
+                output_label = "[v]"  # Final output
+            else:
+                output_label = f"[tmp{i}]"
+            
+            # Create drawtext filter for this chapter
+            # Use system default font for now (no fontfile parameter)
+            font_param = ""
+            
+            filter_part = (
+                f"{current_label}drawtext="
+                f"text='{escaped_title}':"
+                f"fontsize=24:"
+                f"fontcolor=white:"
+                f"{font_param}"  # Include font path if available
+                f"box=1:"
+                f"boxcolor=black@0.7:"
+                f"boxborderw=5:"
+                f"x=w-tw-20:"  # 20px from right edge
+                f"y=20:"       # 20px from top
+                f"enable=between(t\\,{start_time}\\,{end_time})"  # Show only during chapter time
+                f"{output_label}"
+            )
+            
+            filter_parts.append(filter_part)
+            current_label = f"[tmp{i}]"
+        
+        return ";".join(filter_parts)
+    
+    def _find_font(self) -> Optional[str]:
+        """Find the best available font for text overlay.
+        
+        Returns:
+            Path to a suitable font file, or None to use ffmpeg default
+        """
+        # Font search paths in order of preference
+        font_paths = [
+            # Project fonts directory
+            "fonts/OpenSans.ttf",
+            "fonts/DejaVuSans.ttf",
+            "fonts/arial.ttf",
+            "fonts/liberation-sans.ttf",
+            
+            # Windows system fonts
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/calibri.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+            
+            # macOS system fonts
+            "/System/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial.ttf",
+            
+            # Linux system fonts
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/TTF/arial.ttf",
+        ]
+        
+        for font_path in font_paths:
+            if Path(font_path).exists():
+                return font_path
+        
+        # No font found, let ffmpeg use its default
+        return None

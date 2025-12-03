@@ -117,7 +117,12 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         # Step 4: Chapter Merging
         result.step_failed = "chapter merging"
         merger = ChapterMerger()
-        result.output_mkv = merger.merge(str(mkv_path), chapters, str(output_mkv_path))
+        result.output_mkv = merger.merge(
+            str(mkv_path), 
+            chapters, 
+            str(output_mkv_path),
+            overlay_titles=config.overlay_chapter_titles
+        )
         
         # Step 5: Generate Subtitle File
         # Generate SRT subtitle file from transcript for VLC and other players

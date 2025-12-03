@@ -26,6 +26,7 @@ class ChapterMerger:
         """Initialize the ChapterMerger and verify ffmpeg is available."""
         self._verify_ffmpeg()
         self._font_path = self._find_font()
+        self._gpu_available = self._check_gpu_support()
     
     def _verify_ffmpeg(self) -> None:
         """Verify that ffmpeg is installed and accessible.
@@ -42,6 +43,27 @@ class ChapterMerger:
                     "cause": "ffmpeg must be installed and available in PATH"
                 }
             )
+    
+    def _check_gpu_support(self) -> bool:
+        """Check if ffmpeg has GPU hardware acceleration support.
+        
+        Returns:
+            True if GPU acceleration is available, False otherwise
+        """
+        try:
+            # Check for NVIDIA NVDEC/NVENC support
+            result = subprocess.run(
+                ["ffmpeg", "-hwaccels"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            # Check if cuda is in the list of hardware accelerators
+            return "cuda" in result.stdout.lower()
+        
+        except Exception:
+            return False
     
     def validate_chapters(self, chapters: List[Chapter]) -> bool:
         """Validate that the chapter list has valid structure.
@@ -186,27 +208,59 @@ class ChapterMerger:
             # Build ffmpeg command based on overlay option
             if overlay_titles:
                 # Create video filter for chapter title overlays
-                filter_complex = self._create_overlay_filter(chapters)
+                # When using GPU decoding, we need to transfer frames to CPU for drawtext filter
+                if self._gpu_available:
+                    # hwdownload transfers from GPU to CPU memory
+                    # format=nv12 ensures compatible pixel format for drawtext
+                    overlay_filter = self._create_overlay_filter(chapters, input_label='[cpu]')
+                    filter_complex = f"[0:v]hwdownload[gpu_out];[gpu_out]format=nv12[cpu];{overlay_filter}"
+                else:
+                    filter_complex = self._create_overlay_filter(chapters)
+                
+                # Build command with GPU acceleration if available
+                ffmpeg_cmd = ["ffmpeg"]
+                
+                if self._gpu_available:
+                    # Use GPU hardware decoding
+                    ffmpeg_cmd.extend(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"])
+                
+                ffmpeg_cmd.extend([
+                    "-i", str(mkv_path),
+                    "-i", metadata_path,
+                    "-filter_complex", filter_complex,
+                    "-map", "[v]",      # Map the filtered video output
+                    "-map", "0:a",      # Map the original audio
+                    "-map_metadata", "1",
+                ])
+                
+                # Use GPU encoder if available, otherwise use CPU encoder
+                if self._gpu_available:
+                    ffmpeg_cmd.extend([
+                        "-c:v", "h264_nvenc",  # NVIDIA GPU encoder
+                        "-preset", "p4",        # Medium quality preset (p1=fastest, p7=slowest)
+                        "-cq", "23",            # Constant quality (lower = better, 0-51)
+                    ])
+                else:
+                    ffmpeg_cmd.extend([
+                        "-c:v", "libx264",     # CPU encoder fallback
+                        "-preset", "medium",
+                        "-crf", "23",
+                    ])
+                
+                ffmpeg_cmd.extend([
+                    "-c:a", "copy",     # Copy audio without re-encoding
+                    "-y",               # Overwrite output file
+                    str(temp_output)
+                ])
                 
                 result = subprocess.run(
-                    [
-                        "ffmpeg",
-                        "-i", str(mkv_path),
-                        "-i", metadata_path,
-                        "-filter_complex", filter_complex,
-                        "-map", "[v]",      # Map the filtered video output
-                        "-map", "0:a",      # Map the original audio
-                        "-map_metadata", "1",
-                        "-c:a", "copy",     # Copy audio without re-encoding
-                        "-y",               # Overwrite output file
-                        str(temp_output)
-                    ],
+                    ffmpeg_cmd,
                     capture_output=True,
                     text=True,
                     check=False
                 )
             else:
-                # Simple chapter merge without overlays
+                # Simple chapter merge without overlays - no encoding needed
                 result = subprocess.run(
                     [
                         "ffmpeg",
@@ -284,17 +338,18 @@ class ChapterMerger:
                 except Exception:
                     pass  # Best effort cleanup
     
-    def _create_overlay_filter(self, chapters: List[Chapter]) -> str:
+    def _create_overlay_filter(self, chapters: List[Chapter], input_label: str = "[0:v]") -> str:
         """Create ffmpeg filter for overlaying chapter titles on video.
         
         Args:
             chapters: List of Chapter objects to create overlays for
+            input_label: Label for the input stream (default: "[0:v]")
             
         Returns:
             ffmpeg filter_complex string for chapter title overlays
         """
         if not chapters:
-            return "[0:v]copy[v]"
+            return f"{input_label}copy[v]"
         
         # Create a single drawtext filter that handles all chapters
         # We'll create one drawtext filter per chapter and chain them
@@ -323,9 +378,9 @@ class ChapterMerger:
             
             # Input and output labels for this filter
             if i == 0:
-                input_label = "[0:v]"
+                current_input = input_label if input_label else ""
             else:
-                input_label = f"[tmp{i-1}]"
+                current_input = f"[tmp{i-1}]"
             
             if i == len(chapters) - 1:
                 output_label = "[v]"  # Final output
@@ -337,7 +392,7 @@ class ChapterMerger:
             font_param = "fontfile='fonts/OpenSans.ttf':"
             
             filter_part = (
-                f"{input_label}drawtext="
+                f"{current_input}drawtext="
                 f"text='{escaped_title}':"
                 f"fontsize=24:"
                 f"fontcolor=white:"

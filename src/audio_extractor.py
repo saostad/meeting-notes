@@ -23,6 +23,7 @@ class AudioExtractor:
     def __init__(self):
         """Initialize the AudioExtractor and verify ffmpeg is available."""
         self._verify_ffmpeg()
+        self._gpu_available = self._check_gpu_support()
     
     def _verify_ffmpeg(self) -> None:
         """Verify that ffmpeg is installed and accessible.
@@ -39,6 +40,27 @@ class AudioExtractor:
                     "cause": "ffmpeg must be installed and available in PATH"
                 }
             )
+    
+    def _check_gpu_support(self) -> bool:
+        """Check if ffmpeg has GPU hardware acceleration support.
+        
+        Returns:
+            True if GPU acceleration is available, False otherwise
+        """
+        try:
+            # Check for NVIDIA NVDEC support
+            result = subprocess.run(
+                ["ffmpeg", "-hwaccels"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            
+            # Check if cuda is in the list of hardware accelerators
+            return "cuda" in result.stdout.lower()
+        
+        except Exception:
+            return False
     
     def validate_mkv(self, mkv_path: str) -> bool:
         """Validate that the MKV file exists and contains an audio track.
@@ -161,17 +183,25 @@ class AudioExtractor:
         temp_output = output_file.parent / f"{output_file.stem}.tmp.mp3"
         
         try:
+            # Build ffmpeg command with GPU acceleration if available
+            ffmpeg_cmd = ["ffmpeg"]
+            
+            # Add GPU hardware acceleration for decoding if available
+            if self._gpu_available:
+                ffmpeg_cmd.extend(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"])
+            
+            ffmpeg_cmd.extend([
+                "-i", mkv_path,
+                "-vn",  # No video
+                "-acodec", "libmp3lame",  # MP3 codec
+                "-q:a", "2",  # High quality
+                "-y",  # Overwrite output file
+                str(temp_output)
+            ])
+            
             # Extract audio using ffmpeg
             result = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-i", mkv_path,
-                    "-vn",  # No video
-                    "-acodec", "libmp3lame",  # MP3 codec
-                    "-q:a", "2",  # High quality
-                    "-y",  # Overwrite output file
-                    str(temp_output)
-                ],
+                ffmpeg_cmd,
                 capture_output=True,
                 text=True,
                 check=False

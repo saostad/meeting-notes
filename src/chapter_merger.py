@@ -298,7 +298,6 @@ class ChapterMerger:
         
         # Create a single drawtext filter that handles all chapters
         # We'll create one drawtext filter per chapter and chain them
-        current_label = "[0:v]"
         filter_parts = []
         
         for i, chapter in enumerate(chapters):
@@ -310,21 +309,35 @@ class ChapterMerger:
                 # For the last chapter, show until end of video
                 end_time = start_time + 3600  # 1 hour max
             
-            # Escape special characters in title for ffmpeg
-            escaped_title = chapter.title.replace("'", "\\'").replace(":", "\\:")
+            # Escape special characters in title for ffmpeg drawtext filter
+            # Need to escape: ' \ : [ ] , ;
+            escaped_title = (chapter.title
+                .replace("\\", "\\\\")  # Backslash first
+                .replace("'", "'\\\\\\''")  # Single quote
+                .replace(":", "\\:")  # Colon
+                .replace("[", "\\[")  # Left bracket
+                .replace("]", "\\]")  # Right bracket
+                .replace(",", "\\,")  # Comma
+                .replace(";", "\\;")  # Semicolon
+            )
             
-            # Output label for this filter
+            # Input and output labels for this filter
+            if i == 0:
+                input_label = "[0:v]"
+            else:
+                input_label = f"[tmp{i-1}]"
+            
             if i == len(chapters) - 1:
                 output_label = "[v]"  # Final output
             else:
                 output_label = f"[tmp{i}]"
             
             # Create drawtext filter for this chapter
-            # Use system default font for now (no fontfile parameter)
-            font_param = ""
+            # Use relative path to font file - simpler and works cross-platform
+            font_param = "fontfile='fonts/OpenSans.ttf':"
             
             filter_part = (
-                f"{current_label}drawtext="
+                f"{input_label}drawtext="
                 f"text='{escaped_title}':"
                 f"fontsize=24:"
                 f"fontcolor=white:"
@@ -334,12 +347,11 @@ class ChapterMerger:
                 f"boxborderw=5:"
                 f"x=w-tw-20:"  # 20px from right edge
                 f"y=20:"       # 20px from top
-                f"enable=between(t\\,{start_time}\\,{end_time})"  # Show only during chapter time
+                f"enable='between(t\\,{start_time}\\,{end_time})'"  # Show only during chapter time
                 f"{output_label}"
             )
             
             filter_parts.append(filter_part)
-            current_label = f"[tmp{i}]"
         
         return ";".join(filter_parts)
     

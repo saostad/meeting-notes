@@ -40,6 +40,8 @@ def format_result(result: PipelineResult) -> str:
             lines.append(f"  Audio: {result.audio_file}")
         if result.transcript_file:
             lines.append(f"  Transcript: {result.transcript_file}")
+        if result.chapters_file:
+            lines.append(f"  Chapters: {result.chapters_file}")
         if result.subtitle_file:
             lines.append(f"  Subtitles: {result.subtitle_file}")
         if result.output_mkv:
@@ -71,13 +73,15 @@ def format_result(result: PipelineResult) -> str:
             lines.append(result.error)
         
         # Show what was generated before failure
-        if result.audio_file or result.transcript_file:
+        if result.audio_file or result.transcript_file or result.chapters_file:
             lines.append("")
             lines.append("Intermediate files generated before failure:")
             if result.audio_file:
                 lines.append(f"  Audio: {result.audio_file}")
             if result.transcript_file:
                 lines.append(f"  Transcript: {result.transcript_file}")
+            if result.chapters_file:
+                lines.append(f"  Chapters: {result.chapters_file}")
         
         # Display warnings if any
         if result.warnings:

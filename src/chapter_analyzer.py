@@ -55,11 +55,12 @@ class ChapterAnalyzer:
                 }
             )
     
-    def analyze(self, transcript: Transcript) -> List[Chapter]:
+    def analyze(self, transcript: Transcript, save_raw_response: str = None) -> List[Chapter]:
         """Analyze a transcript and identify chapter boundaries.
         
         Args:
             transcript: The transcript to analyze
+            save_raw_response: Optional path to save the raw AI response text
             
         Returns:
             List of Chapter objects with timestamps and titles
@@ -93,6 +94,11 @@ class ChapterAnalyzer:
                 )
             
             response_text = response.text
+            
+            # Save raw response if requested
+            if save_raw_response:
+                with open(save_raw_response, 'w', encoding='utf-8') as f:
+                    f.write(response_text)
             
         except Exception as e:
             # Check for rate limit errors
@@ -155,7 +161,7 @@ For each chapter, provide:
 2. A concise, descriptive title for the chapter
 
 The chapters should represent major topic changes or sections in the meeting.
-Aim for 3-8 chapters depending on the content length and structure.
+Aim for 3-80 chapters depending on the content length and structure.
 
 Return the chapters as a JSON array with this exact format:
 [

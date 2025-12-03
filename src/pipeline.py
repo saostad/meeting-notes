@@ -29,6 +29,7 @@ class PipelineResult:
         audio_file: Path to the extracted audio file (if generated)
         transcript_file: Path to the transcript file (if generated)
         subtitle_file: Path to the SRT subtitle file (if generated)
+        chapters_file: Path to the chapters JSON file (if generated)
         chapters: List of identified chapters (if generated)
         error: Error message if pipeline failed
         warnings: List of warning messages from processing
@@ -39,6 +40,7 @@ class PipelineResult:
     audio_file: Optional[str] = None
     transcript_file: Optional[str] = None
     subtitle_file: Optional[str] = None
+    chapters_file: Optional[str] = None
     chapters: Optional[List[Chapter]] = None
     error: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
@@ -80,6 +82,7 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         # Define intermediate file paths
         audio_path = output_dir / f"{mkv_file.stem}.mp3"
         transcript_path = output_dir / f"{mkv_file.stem}_transcript.json"
+        chapters_raw_path = output_dir / f"{mkv_file.stem}_chapters_raw.txt"
         subtitle_path = output_dir / f"{mkv_file.stem}_chaptered.srt"
         output_mkv_path = output_dir / f"{mkv_file.stem}_chaptered.mkv"
         
@@ -111,8 +114,9 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
             api_key=config.gemini_api_key,
             model_name=config.gemini_model
         )
-        chapters = analyzer.analyze(transcript)
+        chapters = analyzer.analyze(transcript, save_raw_response=str(chapters_raw_path))
         result.chapters = chapters
+        result.chapters_file = str(chapters_raw_path)
         
         # Step 4: Chapter Merging
         result.step_failed = "chapter merging"

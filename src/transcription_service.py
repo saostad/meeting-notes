@@ -51,7 +51,7 @@ class TranscriptionService:
             # Load model
             self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 self.model_name,
-                torch_dtype=self._torch_dtype,
+                dtype=self._torch_dtype,
                 low_cpu_mem_usage=True,
                 use_safetensors=True
             )
@@ -66,7 +66,7 @@ class TranscriptionService:
                 model=self.model,
                 tokenizer=self.processor.tokenizer,
                 feature_extractor=self.processor.feature_extractor,
-                torch_dtype=self._torch_dtype,
+                dtype=self._torch_dtype,
                 device=self._device,
                 return_timestamps=True
             )

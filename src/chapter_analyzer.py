@@ -55,12 +55,13 @@ class ChapterAnalyzer:
                 }
             )
     
-    def analyze(self, transcript: Transcript, save_raw_response: str = None) -> List[Chapter]:
+    def analyze(self, transcript: Transcript, save_raw_response: str = None, save_notes: str = None) -> List[Chapter]:
         """Analyze a transcript and identify chapter boundaries.
         
         Args:
             transcript: The transcript to analyze
             save_raw_response: Optional path to save the raw AI response text
+            save_notes: Optional path to save extracted actionable instructions/tasks
             
         Returns:
             List of Chapter objects with timestamps and titles
@@ -124,7 +125,12 @@ class ChapterAnalyzer:
                 )
         
         # Parse the response
-        chapters = self.parse_response(response_text)
+        chapters, notes = self.parse_response(response_text)
+        
+        # Save notes if requested (as JSON)
+        if save_notes and notes:
+            with open(save_notes, 'w', encoding='utf-8') as f:
+                json.dump(notes, f, indent=2, ensure_ascii=False)
         
         # Validate chapter structure
         try:
@@ -163,46 +169,60 @@ For each chapter, provide:
 The chapters should represent major topic changes or sections in the meeting.
 Aim for 3-80 chapters depending on the content length and structure.
 
-Return the chapters as a JSON array with this exact format:
-[
-  {{"timestamp": 0.0, "title": "Introduction"}},
-  {{"timestamp": 120.5, "title": "Main Discussion"}},
-  {{"timestamp": 300.0, "title": "Conclusion"}}
-]
+Additionally, extract any actionable instructions or tasks mentioned in the meeting. 
+"notes" should be a list of actionable instructions and tasks found in the meeting. If none found, leave this as an empty string.
+Look for:
+- Technical steps that need to be done (e.g., "first do this, then do that")
+- Action items assigned to people
+- Setup instructions or configuration steps
+- Implementation tasks or procedures
+- Any sequential instructions or workflows
+
+Return your response in this exact JSON format:
+{{
+  "chapters": [
+    {{"timestamp": 0.0, "title": "Introduction"}},
+    {{"timestamp": 120.5, "title": "Main Discussion"}},
+    {{"timestamp": 300.0, "title": "Conclusion"}}
+  ],
+  "notes": [
+    {{"timestamp": 0.0, "person_name": "Saeid", "details": "Switch the test workspace branch back to main after the PR merge."}},
+  ]
+}}
 
 NOTE: Ensure to keep the timestamp in seconds format. DO NOT CONVERT TO MINUTES!
-IMPORTANT: Return ONLY the JSON array, no other text or explanation.
+IMPORTANT: Return ONLY the JSON object, no other text or explanation.
 
 Transcript:
 {transcript_text}
 """
         return prompt
     
-    def parse_response(self, response: str) -> List[Chapter]:
-        """Parse Gemini API response into Chapter objects.
+    def parse_response(self, response: str) -> tuple[List[Chapter], list]:
+        """Parse Gemini API response into Chapter objects and notes.
         
         Args:
             response: The response text from Gemini API
             
         Returns:
-            List of Chapter objects
+            Tuple of (List of Chapter objects, notes list)
             
         Raises:
             ProcessingError: If the response cannot be parsed
         """
         # Try to extract JSON from the response
         # Sometimes the model includes markdown code blocks
-        json_match = re.search(r'```(?:json)?\s*(\[.*\])\s*```', response, re.DOTALL)
+        json_match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response, re.DOTALL)
         if json_match:
             json_str = json_match.group(1)
         else:
-            # Try to find a JSON array directly (greedy match to get full array)
-            json_match = re.search(r'\[.*\]', response, re.DOTALL)
+            # Try to find a JSON object directly (greedy match to get full object)
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 json_str = json_match.group(0)
             else:
                 raise ProcessingError(
-                    "Could not find JSON array in Gemini response",
+                    "Could not find JSON object in Gemini response",
                     {
                         "operation": "chapter parsing",
                         "response_preview": response[:200]
@@ -222,19 +242,44 @@ Transcript:
                 }
             )
         
-        # Validate that we got a list
-        if not isinstance(data, list):
+        # Validate that we got an object with chapters
+        if not isinstance(data, dict):
             raise ProcessingError(
-                "Expected JSON array from Gemini, got different type",
+                "Expected JSON object from Gemini, got different type",
                 {
                     "operation": "chapter parsing",
                     "type": type(data).__name__
                 }
             )
         
+        if "chapters" not in data:
+            raise ProcessingError(
+                "Missing 'chapters' field in Gemini response",
+                {"operation": "chapter parsing"}
+            )
+        
+        chapters_data = data["chapters"]
+        notes = data.get("notes", [])
+        
+        # Ensure notes is a list (handle both array and string for backward compatibility)
+        if isinstance(notes, str):
+            notes = [] if not notes else [{"details": notes}]
+        elif not isinstance(notes, list):
+            notes = []
+        
+        # Validate that chapters is a list
+        if not isinstance(chapters_data, list):
+            raise ProcessingError(
+                "Expected 'chapters' to be an array",
+                {
+                    "operation": "chapter parsing",
+                    "type": type(chapters_data).__name__
+                }
+            )
+        
         # Convert to Chapter objects
         chapters = []
-        for i, item in enumerate(data):
+        for i, item in enumerate(chapters_data):
             if not isinstance(item, dict):
                 raise ProcessingError(
                     f"Chapter {i} is not a JSON object",
@@ -283,7 +328,7 @@ Transcript:
                 {"operation": "chapter parsing"}
             )
         
-        return chapters
+        return chapters, notes
     
     def _format_timestamp(self, seconds: float) -> str:
         """Format seconds as MM:SS timestamp.

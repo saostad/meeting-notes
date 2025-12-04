@@ -42,6 +42,8 @@ def format_result(result: PipelineResult) -> str:
             lines.append(f"  Transcript: {result.transcript_file}")
         if result.chapters_file:
             lines.append(f"  Chapters: {result.chapters_file}")
+        if result.notes_file:
+            lines.append(f"  Notes: {result.notes_file}")
         if result.subtitle_file:
             lines.append(f"  Subtitles: {result.subtitle_file}")
         if result.output_mkv:
@@ -82,6 +84,8 @@ def format_result(result: PipelineResult) -> str:
                 lines.append(f"  Transcript: {result.transcript_file}")
             if result.chapters_file:
                 lines.append(f"  Chapters: {result.chapters_file}")
+            if result.notes_file:
+                lines.append(f"  Notes: {result.notes_file}")
         
         # Display warnings if any
         if result.warnings:

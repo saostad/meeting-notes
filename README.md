@@ -11,6 +11,7 @@ The Meeting Video Chapter Tool processes MKV video files from recorded meetings,
 - **Automatic Audio Extraction**: Extracts audio from MKV files using ffmpeg
 - **AI Transcription**: Transcribes audio using Whisper large-v3-turbo model
 - **Intelligent Chapter Detection**: Identifies logical chapter boundaries using Gemini AI
+- **Actionable Notes Extraction**: Automatically extracts instructions and tasks from meeting transcripts
 - **Chapter Embedding**: Adds chapter markers directly to video files
 - **Pipeline Processing**: Complete end-to-end processing with a single command
 - **Skip Existing Files**: Optionally reuse intermediate files from previous runs
@@ -142,8 +143,9 @@ This will:
 1. Extract audio from `meeting.mkv` → `meeting.mp3`
 2. Transcribe audio → `meeting_transcript.json`
 3. Identify chapters using AI
-4. Create chaptered video → `meeting_chaptered.mkv`
-5. Generate subtitles → `meeting_chaptered.srt`
+4. Extract actionable instructions/tasks → `meeting_notes.json`
+5. Create chaptered video → `meeting_chaptered.mkv`
+6. Generate subtitles → `meeting_chaptered.srt`
 
 ### Command-Line Options
 
@@ -188,12 +190,40 @@ For an input file `meeting.mkv`, the tool generates:
 
 - `meeting.mp3` - Extracted audio
 - `meeting_transcript.json` - Timestamped transcript (JSON format)
+- `meeting_notes.json` - Actionable instructions and tasks extracted from the meeting (JSON format)
 - `meeting_chaptered.srt` - Subtitle file (SRT format)
 - `meeting_chaptered.mkv` - Final video with embedded chapters
 
 All files are saved to the same directory as the input file, unless `--output-dir` is specified.
 
 **Note:** The subtitle file (`.srt`) has the same base name as the chaptered video file, so VLC and most video players will automatically load and display the subtitles when you open the video.
+
+### Actionable Notes
+
+The tool automatically extracts actionable instructions and tasks from meeting transcripts, including:
+- Technical steps and procedures (e.g., "first do this, then do that")
+- Action items assigned to people
+- Setup instructions or configuration steps
+- Implementation tasks or workflows
+- Any sequential instructions mentioned in the meeting
+
+These notes are saved to `{filename}_notes.json` in JSON format with the following structure:
+```json
+[
+  {
+    "timestamp": 120.5,
+    "person_name": "John",
+    "details": "Update the database schema to include the new fields"
+  },
+  {
+    "timestamp": 300.0,
+    "person_name": "Sarah",
+    "details": "Review the pull request and merge by end of day"
+  }
+]
+```
+
+The notes are not displayed in the video overlay but are available as a separate file for reference.
 
 ## Viewing Chapters and Subtitles
 

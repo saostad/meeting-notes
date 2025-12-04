@@ -30,6 +30,7 @@ class PipelineResult:
         transcript_file: Path to the transcript file (if generated)
         subtitle_file: Path to the SRT subtitle file (if generated)
         chapters_file: Path to the chapters JSON file (if generated)
+        notes_file: Path to the notes file with actionable instructions (if generated)
         chapters: List of identified chapters (if generated)
         error: Error message if pipeline failed
         warnings: List of warning messages from processing
@@ -41,6 +42,7 @@ class PipelineResult:
     transcript_file: Optional[str] = None
     subtitle_file: Optional[str] = None
     chapters_file: Optional[str] = None
+    notes_file: Optional[str] = None
     chapters: Optional[List[Chapter]] = None
     error: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
@@ -83,6 +85,7 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         audio_path = output_dir / f"{mkv_file.stem}.mp3"
         transcript_path = output_dir / f"{mkv_file.stem}_transcript.json"
         chapters_raw_path = output_dir / f"{mkv_file.stem}_chapters_raw.txt"
+        notes_path = output_dir / f"{mkv_file.stem}_notes.json"
         subtitle_path = output_dir / f"{mkv_file.stem}_chaptered.srt"
         output_mkv_path = output_dir / f"{mkv_file.stem}_chaptered.mkv"
         
@@ -118,18 +121,26 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
             )
             with open(chapters_raw_path, 'r', encoding='utf-8') as f:
                 raw_response = f.read()
-            chapters = analyzer.parse_response(raw_response)
+            chapters, _ = analyzer.parse_response(raw_response)
             result.chapters = chapters
             result.chapters_file = str(chapters_raw_path)
+            if notes_path.exists():
+                result.notes_file = str(notes_path)
             warnings.append(f"Reusing existing chapters file: {chapters_raw_path}")
         else:
             analyzer = ChapterAnalyzer(
                 api_key=config.gemini_api_key,
                 model_name=config.gemini_model
             )
-            chapters = analyzer.analyze(transcript, save_raw_response=str(chapters_raw_path))
+            chapters = analyzer.analyze(
+                transcript, 
+                save_raw_response=str(chapters_raw_path),
+                save_notes=str(notes_path)
+            )
             result.chapters = chapters
             result.chapters_file = str(chapters_raw_path)
+            if notes_path.exists():
+                result.notes_file = str(notes_path)
         
         # Step 4: Chapter Merging
         result.step_failed = "chapter merging"

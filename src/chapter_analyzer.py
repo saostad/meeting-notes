@@ -171,6 +171,7 @@ Aim for 3-80 chapters depending on the content length and structure.
 
 Additionally, extract any actionable instructions or tasks mentioned in the meeting. 
 "notes" should be a list of actionable instructions and tasks found in the meeting. If none found, leave this as an empty string.
+be specific for note details, if possible include order/index of the steps mentioned in meeting to guide the person.
 Look for:
 - Technical steps that need to be done (e.g., "first do this, then do that")
 - Action items assigned to people
@@ -190,7 +191,7 @@ Return your response in this exact JSON format:
   ]
 }}
 
-NOTE: Ensure to keep the timestamp in seconds format. DO NOT CONVERT TO MINUTES!
+IMPORTANT: Ensure to KEEP THE TIMESTAMPS IN SECONDS! DO NOT CONVERT TO MINUTES!
 IMPORTANT: Return ONLY the JSON object, no other text or explanation.
 
 Transcript:

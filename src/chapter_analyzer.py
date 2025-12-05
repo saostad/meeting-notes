@@ -179,19 +179,22 @@ Look for:
 - Implementation tasks or procedures
 - Any sequential instructions or workflows
 
+CRITICAL RULES FOR TIMESTAMPS:
+- Extract timestamps directly from the transcript without modification or rounding.
+- Violation of these rules will invalidate the entire response.
+
 Return your response in this exact JSON format:
 {{
   "chapters": [
-    {{"timestamp": 0.0, "title": "Introduction"}},
-    {{"timestamp": 120.5, "title": "Main Discussion"}},
-    {{"timestamp": 300.0, "title": "Conclusion"}}
+    {{"timestamp_original": 0.0,"timestamp_in_minutes": 0.0, "title": "Introduction"}},
+    {{"timestamp_original": 120.5,"timestamp_in_minutes": 2.0, "title": "Main Discussion"}},
+    {{"timestamp_original": 300.0,"timestamp_in_minutes": 5.0, "title": "Conclusion"}}
   ],
   "notes": [
-    {{"timestamp": 0.0, "person_name": "Saeid", "details": "Switch the test workspace branch back to main after the PR merge."}},
+    {{"timestamp_original": 0.0,"timestamp_in_minutes": 0.0, "person_name": "Saeid", "details": "Switch the test workspace branch back to main after the PR merge."}},
   ]
 }}
 
-IMPORTANT: Ensure to KEEP THE TIMESTAMPS IN SECONDS! DO NOT CONVERT TO MINUTES!
 IMPORTANT: Return ONLY the JSON object, no other text or explanation.
 
 Transcript:
@@ -290,9 +293,9 @@ Transcript:
                     }
                 )
             
-            if "timestamp" not in item:
+            if "timestamp_original" not in item:
                 raise ProcessingError(
-                    f"Chapter {i} missing 'timestamp' field",
+                    f"Chapter {i} missing 'timestamp_original' field",
                     {
                         "operation": "chapter parsing",
                         "chapter_index": i
@@ -309,9 +312,9 @@ Transcript:
                 )
             
             try:
-                timestamp = float(item["timestamp"])
+                timestamp_original = float(item["timestamp_original"])
                 title = str(item["title"])
-                chapter = Chapter(timestamp=timestamp, title=title)
+                chapter = Chapter(timestamp=timestamp_original, title=title)
                 chapters.append(chapter)
             except (ValueError, TypeError) as e:
                 raise ProcessingError(

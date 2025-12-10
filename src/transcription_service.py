@@ -39,6 +39,7 @@ class TranscriptionService:
         
         This method loads the model weights and sets up the transcription pipeline.
         The model is downloaded on first use and cached for subsequent runs.
+        Model caching is optimized for container environments (Requirement 7.5).
         
         Raises:
             DependencyError: If model loading fails
@@ -48,28 +49,64 @@ class TranscriptionService:
             self._device = "cuda:0" if torch.cuda.is_available() else "cpu"
             self._torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
             
-            # Load model
+            # Configure model caching for efficiency (Requirement 7.5)
+            cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
+            
+            # Load model with caching optimization
             self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 self.model_name,
                 dtype=self._torch_dtype,
                 low_cpu_mem_usage=True,
-                use_safetensors=True
+                use_safetensors=True,
+                cache_dir=cache_dir,
+                # Enable local files only if cache exists to speed up loading
+                local_files_only=False
             )
             self.model.to(self._device)
             
-            # Load processor
-            self.processor = AutoProcessor.from_pretrained(self.model_name)
+            # Load processor with same caching configuration
+            self.processor = AutoProcessor.from_pretrained(
+                self.model_name,
+                cache_dir=cache_dir,
+                local_files_only=False
+            )
             
-            # Create pipeline
+            # Create pipeline with optimized settings for different model variants (Requirement 7.2)
+            pipeline_kwargs = {
+                "model": self.model,
+                "tokenizer": self.processor.tokenizer,
+                "feature_extractor": self.processor.feature_extractor,
+                "dtype": self._torch_dtype,
+                "device": self._device,
+                "return_timestamps": True
+            }
+            
+            # Optimize pipeline settings based on model variant
+            if "base" in self.model_name.lower():
+                # Base model: optimize for speed
+                pipeline_kwargs["chunk_length_s"] = 30
+                pipeline_kwargs["batch_size"] = 8
+            elif "large" in self.model_name.lower():
+                # Large models: optimize for accuracy, manage memory
+                pipeline_kwargs["chunk_length_s"] = 30
+                pipeline_kwargs["batch_size"] = 4 if self._device == "cuda:0" else 1
+            else:
+                # Medium and other models: balanced settings
+                pipeline_kwargs["chunk_length_s"] = 30
+                pipeline_kwargs["batch_size"] = 6 if self._device == "cuda:0" else 2
+            
             self.pipe = pipeline(
                 "automatic-speech-recognition",
-                model=self.model,
-                tokenizer=self.processor.tokenizer,
-                feature_extractor=self.processor.feature_extractor,
-                dtype=self._torch_dtype,
-                device=self._device,
-                return_timestamps=True
+                **pipeline_kwargs
             )
+            
+            # Log model loading success with caching info
+            cache_status = "enabled" if cache_dir else "disabled"
+            print(f"✓ Loaded Whisper model: {self.model_name}")
+            print(f"  Device: {self._device}")
+            print(f"  Cache: {cache_status}")
+            if cache_dir:
+                print(f"  Cache directory: {cache_dir}")
             
         except Exception as e:
             raise DependencyError(
@@ -78,6 +115,8 @@ class TranscriptionService:
                     "dependency": "transformers/Whisper",
                     "operation": "model loading",
                     "model_name": self.model_name,
+                    "device": self._device,
+                    "cache_dir": cache_dir,
                     "cause": str(e)
                 }
             )

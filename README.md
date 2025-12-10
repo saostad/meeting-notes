@@ -41,14 +41,126 @@ ffmpeg -version
 
 ## Installation
 
-### 1. Clone or Download the Repository
+You can install and run the Meeting Video Chapter Tool either natively on your system or using Docker containers.
+
+### Option 1: Docker Installation (Recommended)
+
+Docker provides a consistent environment with all dependencies pre-installed, including ffmpeg and Python packages.
+
+#### Prerequisites
+- Docker Engine 20.10+ 
+- For GPU support: NVIDIA Container Toolkit
+
+#### Quick Start
+
+**CPU-only (works on any system):**
+```bash
+# Build CPU image
+./build-docker.sh --type cpu
+
+# Run with your video file
+docker run --rm \
+  -v $(pwd)/videos:/input:ro \
+  -v $(pwd)/output:/output \
+  -e GEMINI_API_KEY=your_api_key_here \
+  meeting-video-tool:cpu \
+  python -m src.main /input/meeting.mkv
+```
+
+**GPU-enabled (NVIDIA GPUs only):**
+```bash
+# Build GPU image
+./build-docker.sh --type gpu
+
+# Run with GPU acceleration
+docker run --rm --gpus all \
+  -v $(pwd)/videos:/input:ro \
+  -v $(pwd)/output:/output \
+  -e GEMINI_API_KEY=your_api_key_here \
+  meeting-video-tool:gpu \
+  python -m src.main /input/meeting.mkv
+```
+
+#### Using Docker Compose
+
+For easier management, use the provided Docker Compose configuration:
+
+**CPU-only:**
+```bash
+# Set your API key
+export GEMINI_API_KEY=your_api_key_here
+
+# Run CPU version
+docker-compose --profile cpu up meeting-video-tool-cpu
+```
+
+**GPU-enabled:**
+```bash
+# Set your API key
+export GEMINI_API_KEY=your_api_key_here
+
+# Run GPU version (requires NVIDIA Container Toolkit)
+docker-compose --profile gpu up meeting-video-tool-gpu
+```
+
+#### Docker Environment Variables
+
+The Docker container supports all the same environment variables as the native installation:
+
+```bash
+docker run --rm \
+  -v $(pwd)/videos:/input:ro \
+  -v $(pwd)/output:/output \
+  -e GEMINI_API_KEY=your_api_key_here \
+  -e WHISPER_MODEL=openai/whisper-medium \
+  -e SKIP_EXISTING=true \
+  -e OVERLAY_CHAPTER_TITLES=true \
+  meeting-video-tool:cpu \
+  python -m src.main /input/meeting.mkv
+```
+
+#### Volume Mounts
+
+- `/input` - Mount your video files here (read-only recommended)
+- `/output` - Processed files will be written here
+- `/cache` - Model weights and temporary files (optional, for persistence)
+
+#### GPU Setup for Docker
+
+To use GPU acceleration with Docker:
+
+1. **Install NVIDIA Container Toolkit:**
+   ```bash
+   # Ubuntu/Debian
+   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+   curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+     sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+   sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+   sudo systemctl restart docker
+   ```
+
+2. **Verify GPU access:**
+   ```bash
+   docker run --rm --gpus all nvidia/cuda:12.1-runtime-ubuntu22.04 nvidia-smi
+   ```
+
+3. **Build and run GPU image:**
+   ```bash
+   ./build-docker.sh --type gpu
+   docker run --rm --gpus all meeting-video-tool:gpu nvidia-smi
+   ```
+
+### Option 2: Native Installation
+
+#### 1. Clone or Download the Repository
 
 ```bash
 git clone <repository-url>
 cd meeting-video-chapters
 ```
 
-### 2. Create a Virtual Environment (Recommended)
+#### 2. Create a Virtual Environment (Recommended)
 
 ```bash
 python -m venv venv
@@ -58,7 +170,7 @@ Activate the virtual environment:
 - **Windows**: `venv\Scripts\activate`
 - **macOS/Linux**: `source venv/bin/activate`
 
-### 3. Install Python Dependencies
+#### 3. Install Python Dependencies
 
 **For CPU-only (slower transcription):**
 ```bash
@@ -79,7 +191,7 @@ pip install -r requirements.txt
 
 See [GPU_SETUP.md](GPU_SETUP.md) for detailed GPU configuration instructions.
 
-### 4. Configure API Keys
+#### 4. Configure API Keys
 
 Copy the example environment file:
 ```bash

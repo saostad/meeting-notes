@@ -102,11 +102,12 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         # Step 2: Transcription
         result.step_failed = "transcription"
         if config.skip_existing and transcript_path.exists():
-            # Reuse existing transcript
+            # Reuse existing transcript (Requirement 7.3)
             transcript = Transcript.from_file(str(transcript_path))
             result.transcript_file = str(transcript_path)
             warnings.append(f"Reusing existing transcript file: {transcript_path}")
         else:
+            # Initialize transcription service with model caching support (Requirement 7.5)
             transcription_service = TranscriptionService(model_name=config.whisper_model)
             transcript = transcription_service.transcribe(result.audio_file, str(transcript_path))
             result.transcript_file = str(transcript_path)
@@ -114,7 +115,7 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         # Step 3: Chapter Identification
         result.step_failed = "chapter identification"
         if config.skip_existing and chapters_raw_path.exists():
-            # Reuse existing chapters file
+            # Reuse existing chapters file (Requirement 7.3)
             analyzer = ChapterAnalyzer(
                 api_key=config.gemini_api_key,
                 model_name=config.gemini_model
@@ -156,7 +157,7 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         # Generate SRT subtitle file from transcript for VLC and other players
         result.step_failed = "subtitle generation"
         if config.skip_existing and subtitle_path.exists():
-            # Reuse existing subtitle file
+            # Reuse existing subtitle file (Requirement 7.3)
             result.subtitle_file = str(subtitle_path)
             warnings.append(f"Reusing existing subtitle file: {subtitle_path}")
         else:

@@ -98,6 +98,22 @@ class Config:
         if not self.whisper_model or not self.whisper_model.strip():
             errors.append("Invalid WHISPER_MODEL: model name cannot be empty")
         
+        # Validate Whisper model variants (Requirement 7.2)
+        valid_whisper_models = [
+            "openai/whisper-base",
+            "openai/whisper-small", 
+            "openai/whisper-medium",
+            "openai/whisper-large",
+            "openai/whisper-large-v2",
+            "openai/whisper-large-v3",
+            "openai/whisper-large-v3-turbo"
+        ]
+        if self.whisper_model not in valid_whisper_models:
+            # Allow custom models but warn about validation
+            import sys
+            print(f"Warning: Using non-standard Whisper model: {self.whisper_model}", file=sys.stderr)
+            print(f"Supported models: {', '.join(valid_whisper_models)}", file=sys.stderr)
+        
         if not self.gemini_model or not self.gemini_model.strip():
             errors.append("Invalid GEMINI_MODEL: model name cannot be empty")
         

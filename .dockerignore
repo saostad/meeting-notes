@@ -1,0 +1,48 @@
+# Git and version control
+.git
+.gitignore
+
+# Python cache and virtual environments
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+.env/
+.pytest_cache/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+output/
+*.mkv
+*.wav
+*.mp3
+*.srt
+*.txt
+!requirements.txt
+!.env.example
+
+# Documentation and specs
+README.md
+.kiro/
+
+# Test files
+tests/

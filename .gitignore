@@ -24,8 +24,8 @@ models/
 *.bin
 *.safetensors
 
-# Hugging Face transformers cache
-transformers_cache/
+# Hugging Face model cache
+cache/
 
 # Test outputs
 .pytest_cache/
@@ -64,7 +64,6 @@ fonts/temp/
 *.log
 
 # Temporary test files
-test_*.py
 example_*.py
 *_demo.py
 FEATURE_DEMO.md

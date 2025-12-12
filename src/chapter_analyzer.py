@@ -1,33 +1,82 @@
 """Chapter analysis component for the Meeting Video Chapter Tool.
 
 This module provides functionality to analyze transcripts and identify
-logical chapter boundaries using Google's Gemini API.
+logical chapter boundaries using configurable AI providers.
 """
 
 import re
 import json
-from typing import List
-import google.generativeai as genai
+from typing import List, Tuple, Dict, Any
 
 from src.chapter import Chapter, validate_chapter_list
 from src.transcript import Transcript
 from src.errors import DependencyError, ValidationError, ProcessingError
+from src.ai_provider import AIProviderManager
+from src.config import Config
 
 
 class ChapterAnalyzer:
-    """Analyzes transcripts to identify chapter boundaries using Gemini API.
+    """Analyzes transcripts to identify chapter boundaries using AI providers.
+    
+    This class now uses the AIProviderManager to support multiple AI providers
+    including local models (Ollama, Transformers) and external APIs (Gemini).
     
     Attributes:
-        api_key: Google Gemini API key
-        model_name: Name of the Gemini model to use
+        config: Configuration object with AI provider settings
+        ai_provider_manager: Manager for AI provider selection and fallback
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-flash-latest"):
-        """Initialize the ChapterAnalyzer.
+    def __init__(self, config: Config):
+        """Initialize the ChapterAnalyzer with AI provider configuration.
+        
+        Args:
+            config: Configuration object containing AI provider settings
+            
+        Raises:
+            ValidationError: If configuration is invalid
+            DependencyError: If no AI providers are available
+        """
+        self.config = config
+        
+        # Initialize AI provider manager
+        try:
+            self.ai_provider_manager = AIProviderManager(config)
+        except Exception as e:
+            raise DependencyError(
+                "Failed to initialize AI provider system",
+                {
+                    "cause": str(e),
+                    "suggestion": "Check your AI provider configuration and dependencies"
+                }
+            )
+        
+        # Validate that at least one provider is available
+        validation_issues = self.ai_provider_manager.validate_configuration()
+        if validation_issues:
+            # Check if any provider is actually available
+            available_providers = self.ai_provider_manager.get_available_providers()
+            if not available_providers:
+                raise DependencyError(
+                    "No AI providers are available for transcript analysis",
+                    {
+                        "issues": validation_issues,
+                        "suggestion": "Install required dependencies or configure API keys"
+                    }
+                )
+    
+    @classmethod
+    def create_legacy(cls, api_key: str, model_name: str = "gemini-flash-latest") -> "ChapterAnalyzer":
+        """Create ChapterAnalyzer with legacy Gemini-only configuration.
+        
+        This method provides backward compatibility for existing code that
+        directly passes Gemini API credentials.
         
         Args:
             api_key: Google Gemini API key
-            model_name: Name of the Gemini model to use (default: gemini-flash-latest)
+            model_name: Name of the Gemini model to use
+            
+        Returns:
+            ChapterAnalyzer configured for Gemini-only usage
             
         Raises:
             ValidationError: If API key is missing or invalid
@@ -38,22 +87,15 @@ class ChapterAnalyzer:
                 {"operation": "ChapterAnalyzer initialization"}
             )
         
-        self.api_key = api_key
-        self.model_name = model_name
+        # Create a minimal config for Gemini-only usage
+        config = Config(
+            gemini_api_key=api_key,
+            gemini_model=model_name,
+            ai_provider="gemini",
+            enable_fallback=False
+        )
         
-        # Configure the Gemini API
-        try:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel(self.model_name)
-        except Exception as e:
-            raise DependencyError(
-                "Failed to initialize Gemini API",
-                {
-                    "dependency": "google-generativeai",
-                    "model": self.model_name,
-                    "cause": str(e)
-                }
-            )
+        return cls(config)
     
     def analyze(self, transcript: Transcript, save_raw_response: str = None, save_notes: str = None) -> List[Chapter]:
         """Analyze a transcript and identify chapter boundaries.
@@ -68,7 +110,26 @@ class ChapterAnalyzer:
             
         Raises:
             ValidationError: If the transcript is empty or invalid
-            DependencyError: If the Gemini API call fails
+            DependencyError: If AI provider calls fail
+            ProcessingError: If chapter parsing or validation fails
+        """
+        chapters, notes = self.analyze_with_notes(transcript, save_raw_response, save_notes)
+        return chapters
+    
+    def analyze_with_notes(self, transcript: Transcript, save_raw_response: str = None, save_notes: str = None) -> Tuple[List[Chapter], List[Dict[str, Any]]]:
+        """Analyze a transcript and return both chapters and notes.
+        
+        Args:
+            transcript: The transcript to analyze
+            save_raw_response: Optional path to save the raw AI response text
+            save_notes: Optional path to save extracted actionable instructions/tasks
+            
+        Returns:
+            Tuple of (List of Chapter objects, List of note dictionaries)
+            
+        Raises:
+            ValidationError: If the transcript is empty or invalid
+            DependencyError: If AI provider calls fail
             ProcessingError: If chapter parsing or validation fails
         """
         # Validate transcript
@@ -78,59 +139,25 @@ class ChapterAnalyzer:
                 {"operation": "chapter identification"}
             )
         
-        # Format the prompt
-        prompt = self.format_prompt(transcript)
-        
-        # Call Gemini API
+        # Use AI provider manager to analyze transcript
         try:
-            response = self.model.generate_content(prompt)
-            
-            if not response or not response.text:
-                raise DependencyError(
-                    "Gemini API returned empty response",
-                    {
-                        "dependency": "Gemini API",
-                        "model": self.model_name
-                    }
-                )
-            
-            response_text = response.text
-            
-            # Save raw response if requested
-            if save_raw_response:
-                with open(save_raw_response, 'w', encoding='utf-8') as f:
-                    f.write(response_text)
-            
+            chapters, notes = self.ai_provider_manager.analyze_transcript(
+                transcript, 
+                save_raw_response, 
+                save_notes
+            )
         except Exception as e:
-            # Check for rate limit errors
-            error_str = str(e).lower()
-            if "rate limit" in error_str or "quota" in error_str:
-                raise DependencyError(
-                    "Gemini API rate limit exceeded",
-                    {
-                        "dependency": "Gemini API",
-                        "model": self.model_name,
-                        "cause": str(e),
-                        "suggestion": "Please wait a few moments and try again"
-                    }
-                )
+            # Re-raise with enhanced context if needed
+            if isinstance(e, (ValidationError, DependencyError, ProcessingError)):
+                raise
             else:
-                raise DependencyError(
-                    "Gemini API call failed",
+                raise ProcessingError(
+                    "Unexpected error during transcript analysis",
                     {
-                        "dependency": "Gemini API",
-                        "model": self.model_name,
+                        "operation": "chapter identification",
                         "cause": str(e)
                     }
                 )
-        
-        # Parse the response
-        chapters, notes = self.parse_response(response_text)
-        
-        # Save notes if requested (as JSON)
-        if save_notes and notes:
-            with open(save_notes, 'w', encoding='utf-8') as f:
-                json.dump(notes, f, indent=2, ensure_ascii=False)
         
         # Validate chapter structure
         try:
@@ -144,205 +171,20 @@ class ChapterAnalyzer:
                 }
             )
         
-        return chapters
-    
-    def format_prompt(self, transcript: Transcript) -> str:
-        """Format a transcript into a prompt for Gemini.
-        
-        Args:
-            transcript: The transcript to format
-            
-        Returns:
-            Formatted prompt string
-        """
-        # Build the transcript text with timestamps
-        transcript_text = ""
-        for segment in transcript.segments:
-            timestamp_str = self._format_timestamp(segment.start_time)
-            transcript_text += f"[{timestamp_str}] {segment.text}\n"
-        
-        prompt = f"""Analyze the following meeting transcript and identify logical chapter boundaries.
-For each chapter, provide:
-1. The timestamp (in seconds) where the chapter begins
-2. A concise, descriptive title for the chapter
-
-The chapters should represent major topic changes or sections in the meeting.
-Aim for 3-80 chapters depending on the content length and structure.
-
-Additionally, extract any actionable instructions or tasks mentioned in the meeting. 
-"notes" should be a list of actionable instructions and tasks found in the meeting. If none found, leave this as an empty string.
-be specific for note details, if possible include order/index of the steps mentioned in meeting to guide the person.
-Look for:
-- Technical steps that need to be done (e.g., "first do this, then do that")
-- Action items assigned to people
-- Setup instructions or configuration steps
-- Implementation tasks or procedures
-- Any sequential instructions or workflows
-
-CRITICAL RULES FOR TIMESTAMPS:
-- Extract timestamps directly from the transcript without modification or rounding.
-- Violation of these rules will invalidate the entire response.
-
-Return your response in this exact JSON format:
-{{
-  "chapters": [
-    {{"timestamp_original": 0.0,"timestamp_in_minutes": 0.0, "title": "Introduction"}},
-    {{"timestamp_original": 120.5,"timestamp_in_minutes": 2.0, "title": "Main Discussion"}},
-    {{"timestamp_original": 300.0,"timestamp_in_minutes": 5.0, "title": "Conclusion"}}
-  ],
-  "notes": [
-    {{"timestamp_original": 0.0,"timestamp_in_minutes": 0.0, "person_name": "Saeid", "details": "Switch the test workspace branch back to main after the PR merge."}},
-  ]
-}}
-
-IMPORTANT: Return ONLY the JSON object, no other text or explanation.
-
-Transcript:
-{transcript_text}
-"""
-        return prompt
-    
-    def parse_response(self, response: str) -> tuple[List[Chapter], list]:
-        """Parse Gemini API response into Chapter objects and notes.
-        
-        Args:
-            response: The response text from Gemini API
-            
-        Returns:
-            Tuple of (List of Chapter objects, notes list)
-            
-        Raises:
-            ProcessingError: If the response cannot be parsed
-        """
-        # Try to extract JSON from the response
-        # Sometimes the model includes markdown code blocks
-        json_match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try to find a JSON object directly (greedy match to get full object)
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(0)
-            else:
-                raise ProcessingError(
-                    "Could not find JSON object in Gemini response",
-                    {
-                        "operation": "chapter parsing",
-                        "response_preview": response[:200]
-                    }
-                )
-        
-        # Parse the JSON
-        try:
-            data = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            raise ProcessingError(
-                "Failed to parse JSON from Gemini response",
-                {
-                    "operation": "chapter parsing",
-                    "cause": str(e),
-                    "json_preview": json_str[:200]
-                }
-            )
-        
-        # Validate that we got an object with chapters
-        if not isinstance(data, dict):
-            raise ProcessingError(
-                "Expected JSON object from Gemini, got different type",
-                {
-                    "operation": "chapter parsing",
-                    "type": type(data).__name__
-                }
-            )
-        
-        if "chapters" not in data:
-            raise ProcessingError(
-                "Missing 'chapters' field in Gemini response",
-                {"operation": "chapter parsing"}
-            )
-        
-        chapters_data = data["chapters"]
-        notes = data.get("notes", [])
-        
-        # Ensure notes is a list (handle both array and string for backward compatibility)
-        if isinstance(notes, str):
-            notes = [] if not notes else [{"details": notes}]
-        elif not isinstance(notes, list):
-            notes = []
-        
-        # Validate that chapters is a list
-        if not isinstance(chapters_data, list):
-            raise ProcessingError(
-                "Expected 'chapters' to be an array",
-                {
-                    "operation": "chapter parsing",
-                    "type": type(chapters_data).__name__
-                }
-            )
-        
-        # Convert to Chapter objects
-        chapters = []
-        for i, item in enumerate(chapters_data):
-            if not isinstance(item, dict):
-                raise ProcessingError(
-                    f"Chapter {i} is not a JSON object",
-                    {
-                        "operation": "chapter parsing",
-                        "chapter_index": i
-                    }
-                )
-            
-            if "timestamp_original" not in item:
-                raise ProcessingError(
-                    f"Chapter {i} missing 'timestamp_original' field",
-                    {
-                        "operation": "chapter parsing",
-                        "chapter_index": i
-                    }
-                )
-            
-            if "title" not in item:
-                raise ProcessingError(
-                    f"Chapter {i} missing 'title' field",
-                    {
-                        "operation": "chapter parsing",
-                        "chapter_index": i
-                    }
-                )
-            
-            try:
-                timestamp_original = float(item["timestamp_original"])
-                title = str(item["title"])
-                chapter = Chapter(timestamp=timestamp_original, title=title)
-                chapters.append(chapter)
-            except (ValueError, TypeError) as e:
-                raise ProcessingError(
-                    f"Invalid data in chapter {i}",
-                    {
-                        "operation": "chapter parsing",
-                        "chapter_index": i,
-                        "cause": str(e)
-                    }
-                )
-        
-        if not chapters:
-            raise ProcessingError(
-                "No chapters found in Gemini response",
-                {"operation": "chapter parsing"}
-            )
-        
         return chapters, notes
     
-    def _format_timestamp(self, seconds: float) -> str:
-        """Format seconds as MM:SS timestamp.
+    def get_available_providers(self) -> List[str]:
+        """Get list of currently available AI providers.
         
-        Args:
-            seconds: Time in seconds
-            
         Returns:
-            Formatted timestamp string
+            List of provider names that are available
         """
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        return f"{minutes:02d}:{secs:02d}"
+        return self.ai_provider_manager.get_available_providers()
+    
+    def validate_configuration(self) -> List[str]:
+        """Validate the current AI provider configuration.
+        
+        Returns:
+            List of configuration issues/warnings
+        """
+        return self.ai_provider_manager.validate_configuration()

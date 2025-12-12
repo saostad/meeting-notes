@@ -175,16 +175,16 @@ Configuration:
         print(f"Processing: {input_path.name}")
         print("")
         
-        # Execute pipeline with progress messages
-        print("Step 1/5: Extracting audio...")
-        print("Step 2/5: Transcribing audio (this may take a while)...")
-        print("Step 3/5: Identifying chapters...")
-        print("Step 4/5: Merging chapters into video...")
-        print("Step 5/5: Generating subtitles...")
-        print("")
+        # Define progress callback function
+        def progress_callback(step_num: int, step_name: str, status: str):
+            if status == "start":
+                print(f"Step {step_num}/5: {step_name}...")
+            elif status == "complete":
+                print(f"Step {step_num}/5: {step_name}... ✓ Complete")
         
-        # Run the pipeline
-        result = run_pipeline(str(input_path), config)
+        # Run the pipeline with progress reporting
+        result = run_pipeline(str(input_path), config, progress_callback)
+        print("")  # Add blank line after all steps complete
         
         # Display results
         print(format_result(result))

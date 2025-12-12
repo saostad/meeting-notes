@@ -5,6 +5,10 @@ speech recognition model, generating timestamped transcripts.
 """
 
 import os
+import sys
+import warnings
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from typing import Optional
 import torch
@@ -50,7 +54,7 @@ class TranscriptionService:
             self._torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
             
             # Configure model caching for efficiency (Requirement 7.5)
-            cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
+            cache_dir = os.getenv("HF_HOME", "/workspace/cache/huggingface")
             
             # Load model with caching optimization
             self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
@@ -81,19 +85,17 @@ class TranscriptionService:
                 "return_timestamps": True
             }
             
-            # Optimize pipeline settings based on model variant
+            # Optimize pipeline settings for Docker performance
+            # Remove chunk_length_s to avoid experimental warning and use Whisper's native chunking
             if "base" in self.model_name.lower():
-                # Base model: optimize for speed
-                pipeline_kwargs["chunk_length_s"] = 30
-                pipeline_kwargs["batch_size"] = 8
+                # Base model: maximize speed for Docker
+                pipeline_kwargs["batch_size"] = 16 if self._device == "cuda:0" else 4
             elif "large" in self.model_name.lower():
-                # Large models: optimize for accuracy, manage memory
-                pipeline_kwargs["chunk_length_s"] = 30
-                pipeline_kwargs["batch_size"] = 4 if self._device == "cuda:0" else 1
+                # Large models: balance speed and memory for Docker
+                pipeline_kwargs["batch_size"] = 8 if self._device == "cuda:0" else 2
             else:
-                # Medium and other models: balanced settings
-                pipeline_kwargs["chunk_length_s"] = 30
-                pipeline_kwargs["batch_size"] = 6 if self._device == "cuda:0" else 2
+                # Medium and other models: optimized for Docker
+                pipeline_kwargs["batch_size"] = 12 if self._device == "cuda:0" else 3
             
             self.pipe = pipeline(
                 "automatic-speech-recognition",
@@ -107,6 +109,7 @@ class TranscriptionService:
             print(f"  Cache: {cache_status}")
             if cache_dir:
                 print(f"  Cache directory: {cache_dir}")
+            print(f"  Using Whisper's native chunking for optimal long-form transcription")
             
         except Exception as e:
             raise DependencyError(
@@ -172,12 +175,26 @@ class TranscriptionService:
             self.load_model()
         
         try:
-            # Run transcription
-            result = self.pipe(
-                str(audio_path),
-                generate_kwargs={"language": "english"},
-                return_timestamps=True
-            )
+            # Suppress known Whisper warnings that don't affect functionality
+            stderr_buffer = StringIO()
+            with warnings.catch_warnings(), redirect_stderr(stderr_buffer):
+                warnings.filterwarnings("ignore", category=FutureWarning, module="transformers")
+                warnings.filterwarnings("ignore", message=".*forced_decoder_ids.*")
+                warnings.filterwarnings("ignore", message=".*attention mask.*")
+                
+                # Run transcription with minimal configuration to avoid conflicts
+                # Based on Context7 docs, avoid setting both language and task simultaneously
+                result = self.pipe(
+                    str(audio_path),
+                    generate_kwargs={"language": "english"},
+                    return_timestamps=True
+                )
+                
+            # Only show stderr output if it contains actual errors (not just warnings)
+            stderr_content = stderr_buffer.getvalue()
+            if stderr_content and not any(warning in stderr_content.lower() for warning in 
+                                        ['forced_decoder_ids', 'attention mask', 'deprecated', 'task=transcribe']):
+                print(stderr_content, file=sys.stderr)
             
             # Handle empty transcription result
             if not result or "text" not in result:
@@ -221,6 +238,16 @@ class TranscriptionService:
                         # Fallback if timestamp format is unexpected
                         start_time = 0.0
                         end_time = 0.0
+                    
+                    # Fix invalid timestamps where end_time < start_time
+                    if end_time < start_time:
+                        print(f"⚠ Warning: Invalid timestamp detected - end_time ({end_time}) < start_time ({start_time}). Correcting...")
+                        # Swap the values if they're reversed
+                        start_time, end_time = end_time, start_time
+                    
+                    # Ensure end_time is at least equal to start_time
+                    if end_time < start_time:
+                        end_time = start_time
                     
                     if text:  # Only add non-empty segments
                         segments.append(TranscriptSegment(

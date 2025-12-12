@@ -49,7 +49,7 @@ class PipelineResult:
     step_failed: Optional[str] = None
 
 
-def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
+def run_pipeline(mkv_path: str, config: Config, progress_callback=None) -> PipelineResult:
     """Execute the complete video chapter processing pipeline.
     
     This function orchestrates all processing steps in sequence:
@@ -64,6 +64,7 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
     Args:
         mkv_path: Path to the input MKV file
         config: Configuration object with API keys and settings
+        progress_callback: Optional callback function to report progress (step_num, step_name, status)
         
     Returns:
         PipelineResult: Result object with success status, file paths, and any errors
@@ -90,6 +91,8 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         output_mkv_path = output_dir / f"{mkv_file.stem}_chaptered.mkv"
         
         # Step 1: Audio Extraction
+        if progress_callback:
+            progress_callback(1, "Extracting audio", "start")
         result.step_failed = "audio extraction"
         if config.skip_existing and audio_path.exists():
             # Reuse existing audio file
@@ -98,8 +101,12 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         else:
             extractor = AudioExtractor()
             result.audio_file = extractor.extract(str(mkv_path), str(audio_path))
+        if progress_callback:
+            progress_callback(1, "Extracting audio", "complete")
         
         # Step 2: Transcription
+        if progress_callback:
+            progress_callback(2, "Transcribing audio (this may take a while)", "start")
         result.step_failed = "transcription"
         if config.skip_existing and transcript_path.exists():
             # Reuse existing transcript (Requirement 7.3)
@@ -111,28 +118,19 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
             transcription_service = TranscriptionService(model_name=config.whisper_model)
             transcript = transcription_service.transcribe(result.audio_file, str(transcript_path))
             result.transcript_file = str(transcript_path)
+        if progress_callback:
+            progress_callback(2, "Transcribing audio (this may take a while)", "complete")
         
         # Step 3: Chapter Identification
+        if progress_callback:
+            progress_callback(3, "Identifying chapters", "start")
         result.step_failed = "chapter identification"
         if config.skip_existing and chapters_raw_path.exists():
             # Reuse existing chapters file (Requirement 7.3)
-            analyzer = ChapterAnalyzer(
-                api_key=config.gemini_api_key,
-                model_name=config.gemini_model
-            )
-            with open(chapters_raw_path, 'r', encoding='utf-8') as f:
-                raw_response = f.read()
-            chapters, _ = analyzer.parse_response(raw_response)
-            result.chapters = chapters
-            result.chapters_file = str(chapters_raw_path)
-            if notes_path.exists():
-                result.notes_file = str(notes_path)
-            warnings.append(f"Reusing existing chapters file: {chapters_raw_path}")
-        else:
-            analyzer = ChapterAnalyzer(
-                api_key=config.gemini_api_key,
-                model_name=config.gemini_model
-            )
+            # For backward compatibility, we need to parse the existing response
+            # Since we can't easily recreate the provider that generated it,
+            # we'll create a new analyzer and let it handle the analysis
+            analyzer = ChapterAnalyzer(config)
             chapters = analyzer.analyze(
                 transcript, 
                 save_raw_response=str(chapters_raw_path),
@@ -142,8 +140,24 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
             result.chapters_file = str(chapters_raw_path)
             if notes_path.exists():
                 result.notes_file = str(notes_path)
+            warnings.append(f"Reusing existing transcript but re-analyzing with current AI provider configuration")
+        else:
+            analyzer = ChapterAnalyzer(config)
+            chapters = analyzer.analyze(
+                transcript, 
+                save_raw_response=str(chapters_raw_path),
+                save_notes=str(notes_path)
+            )
+            result.chapters = chapters
+            result.chapters_file = str(chapters_raw_path)
+            if notes_path.exists():
+                result.notes_file = str(notes_path)
+        if progress_callback:
+            progress_callback(3, "Identifying chapters", "complete")
         
         # Step 4: Chapter Merging
+        if progress_callback:
+            progress_callback(4, "Merging chapters into video", "start")
         result.step_failed = "chapter merging"
         merger = ChapterMerger()
         result.output_mkv = merger.merge(
@@ -152,9 +166,13 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
             str(output_mkv_path),
             overlay_titles=config.overlay_chapter_titles
         )
+        if progress_callback:
+            progress_callback(4, "Merging chapters into video", "complete")
         
         # Step 5: Generate Subtitle File
         # Generate SRT subtitle file from transcript for VLC and other players
+        if progress_callback:
+            progress_callback(5, "Generating subtitles", "start")
         result.step_failed = "subtitle generation"
         if config.skip_existing and subtitle_path.exists():
             # Reuse existing subtitle file (Requirement 7.3)
@@ -163,6 +181,8 @@ def run_pipeline(mkv_path: str, config: Config) -> PipelineResult:
         else:
             transcript.to_srt(str(subtitle_path))
             result.subtitle_file = str(subtitle_path)
+        if progress_callback:
+            progress_callback(5, "Generating subtitles", "complete")
         
         # Pipeline completed successfully
         result.success = True

@@ -17,6 +17,7 @@ WORKDIR /app
 COPY src/ ./src/
 COPY requirements.txt ./
 COPY setup.sh ./
+COPY .env.example ./.env.example
 
 # Make setup script executable
 RUN chmod +x setup.sh

@@ -9,8 +9,11 @@ services:
       - ./workspace:/workspace:cached       # Cached mount for better performance
       - ./src:/app/src:ro,cached           # Read-only cached mount for source
       - ./videos:/videos:ro,cached         # Read-only cached mount for videos
+      - ./.env:/app/.env:ro                # Mount .env file for direct access
     
     # Environment configuration (Requirements 3.1, 6.1, 6.2)
+    # Variables are loaded from .env file with docker-compose variable substitution
+    # The .env file is also mounted directly for the Python application to access
     environment:
       # Required API key
       - GEMINI_API_KEY=${GEMINI_API_KEY}

@@ -3,8 +3,8 @@ services:
   app:
     # Use pre-built image from GitHub Container Registry
     # To build locally instead, comment out 'image' and uncomment 'build: .'
-    # image: ghcr.io/yourusername/meeting-video-tool:latest
-    build: .
+    # build: .
+    image: ghcr.io/saostad/meeting-video-tool:latest
     container_name: meeting-video-tool-dev
     
     # Optimized volume mounts for Windows performance

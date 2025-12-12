@@ -1,6 +1,9 @@
 services:
   # Single unified service for development environment (Requirements 3.1, 6.1, 6.2, 8.1, 8.4, 8.5)
   app:
+    # Use pre-built image from GitHub Container Registry
+    # To build locally instead, comment out 'image' and uncomment 'build: .'
+    # image: ghcr.io/yourusername/meeting-video-tool:latest
     build: .
     container_name: meeting-video-tool-dev
     
@@ -84,6 +87,11 @@ services:
     ulimits:
       memlock: -1
       stack: 67108864
+    
+    # Security options for better performance (bypass security overhead)
+    security_opt:
+      - seccomp:unconfined
+    privileged: true
     
     # Default command for development
     command: ["./setup.sh"]

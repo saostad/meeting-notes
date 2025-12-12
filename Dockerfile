@@ -123,7 +123,6 @@ WORKDIR /app
 COPY src/ ./src/
 COPY requirements.txt ./
 COPY setup.sh ./
-COPY test_gpu.py ./
 COPY .env.example ./.env.example
 
 # Make setup script executable

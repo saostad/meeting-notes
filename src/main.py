@@ -63,6 +63,11 @@ def format_result(result: PipelineResult) -> str:
             lines.append("Warnings:")
             for warning in result.warnings:
                 lines.append(f"  ⚠ {warning}")
+        
+        # Display timing information
+        if hasattr(result, 'total_time') and result.total_time > 0:
+            lines.append("")
+            lines.append(f"Total processing time: {result.total_time:.2f}s")
     else:
         lines.append("✗ Processing failed")
         lines.append("")
@@ -93,6 +98,11 @@ def format_result(result: PipelineResult) -> str:
             lines.append("Warnings:")
             for warning in result.warnings:
                 lines.append(f"  ⚠ {warning}")
+        
+        # Display timing information for failed runs
+        if hasattr(result, 'total_time') and result.total_time > 0:
+            lines.append("")
+            lines.append(f"Time before failure: {result.total_time:.2f}s")
     
     return "\n".join(lines)
 

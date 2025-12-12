@@ -208,7 +208,8 @@ Look for:
 - Any sequential instructions or workflows
 
 CRITICAL RULES FOR TIMESTAMPS:
-- Extract timestamps directly from the transcript without modification or rounding.
+- Extract timestamps directly from the "start_time" fields without modification or rounding.
+- the "start_time" field value is in seconds, use that as the value of "timestamp_original" field.
 - Violation of these rules will invalidate the entire response.
 
 Return your response in this exact JSON format:

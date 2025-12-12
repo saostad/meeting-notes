@@ -11,8 +11,6 @@ from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
 from typing import Optional
-import torch
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
 from src.transcript import Transcript, TranscriptSegment
 from src.errors import FileSystemError, DependencyError, ProcessingError
@@ -49,6 +47,10 @@ class TranscriptionService:
             DependencyError: If model loading fails
         """
         try:
+            # Import heavy dependencies only when needed (lazy loading)
+            import torch
+            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+            
             # Determine device and dtype
             self._device = "cuda:0" if torch.cuda.is_available() else "cpu"
             self._torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32

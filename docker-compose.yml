@@ -52,12 +52,12 @@ services:
       - TOKENIZERS_PARALLELISM=true
       - HF_HOME=/workspace/cache/huggingface
       
-      # GPU environment variables (Requirements 6.1, 6.2)
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      # GPU environment variables (following NVIDIA Container Runtime docs)
       - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
     
     # Optimized resource allocation for Windows Docker performance
+    # NVIDIA GPU configuration (using --gpus instead of runtime for better compatibility)
     deploy:
       resources:
         limits:

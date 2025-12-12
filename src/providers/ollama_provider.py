@@ -125,6 +125,14 @@ class OllamaProvider(BaseAIProvider):
         # Format the prompt
         prompt = self._format_prompt(transcript)
         
+        # Log the prompt for debugging
+        print(f"🔍 PROMPT DEBUG - Sending to Ollama model '{self.model_name}':")
+        print(f"{'='*80}")
+        print(prompt)
+        print(f"{'='*80}")
+        print(f"📊 Prompt stats: {len(prompt)} characters, {len(prompt.split())} words")
+        print()
+        
         # Call Ollama API
         try:
             response_text = self._call_ollama_api(prompt)
@@ -192,6 +200,15 @@ class OllamaProvider(BaseAIProvider):
             "options": self.model_parameters
         }
         
+        # Log API call details
+        print(f"🚀 OLLAMA API CALL:")
+        print(f"   Model: {self.model_name}")
+        print(f"   Base URL: {self.base_url}")
+        print(f"   Format: json")
+        print(f"   Options: {self.model_parameters}")
+        print(f"   Timeout: {self.timeout}s")
+        print()
+        
         response = requests.post(
             f"{self.base_url}/api/generate",
             json=payload,
@@ -208,7 +225,17 @@ class OllamaProvider(BaseAIProvider):
                 {"expected_field": "response", "received": list(result.keys())}
             )
         
-        return result['response']
+        response_text = result['response']
+        
+        # Log the response for debugging
+        print(f"📥 OLLAMA RESPONSE:")
+        print(f"{'='*80}")
+        print(response_text)
+        print(f"{'='*80}")
+        print(f"📊 Response stats: {len(response_text)} characters, {len(response_text.split())} words")
+        print()
+        
+        return response_text
     
     def _format_prompt(self, transcript: Transcript) -> str:
         """Format a transcript into a prompt for the Ollama model.

@@ -92,7 +92,7 @@ Set these in your `.env` file or pass with `-e`:
 | `GEMINI_API_KEY` | **Yes** | - | Google Gemini API key |
 | `WHISPER_MODEL` | No | `openai/whisper-large-v3-turbo` | Whisper model for transcription |
 | `LOCAL_MODEL_NAME` | No | `phi4` | Default Ollama model to use |
-| `AI_PROVIDER` | No | `gemini` | AI provider (gemini, ollama) |
+| `AI_PROVIDER` | No | `local` | AI provider (local, gemini) |
 | `DEVELOPMENT_MODE` | No | `true` | Enable development features |
 
 ### GPU Support

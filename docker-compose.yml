@@ -28,15 +28,16 @@ services:
       - SKIP_DEPENDENCY_VALIDATION=${SKIP_DEPENDENCY_VALIDATION:-true}
       
       # AI Provider Configuration
-      - AI_PROVIDER=${AI_PROVIDER:-gemini}
+      - AI_PROVIDER=${AI_PROVIDER:-local}
       - ENABLE_FALLBACK=${ENABLE_FALLBACK:-false}
-      - LOCAL_MODEL_NAME=${LOCAL_MODEL_NAME:-phi4}
+      - LOCAL_MODEL_NAME=${LOCAL_MODEL_NAME:-phi4:latest}
       - LOCAL_MODEL_FRAMEWORK=${LOCAL_MODEL_FRAMEWORK:-ollama}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://localhost:11434}
       
       # Ollama Configuration
       - OLLAMA_MODELS=/workspace/models/ollama
       - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_NUM_CTX=16384
       
       # Development-friendly settings (Requirement 8.1, 8.5)
       - PYTHONUNBUFFERED=1

@@ -6,6 +6,7 @@ audio extraction, transcription, chapter identification, and chapter merging.
 
 import os
 import time
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -18,6 +19,61 @@ from src.chapter import Chapter
 from src.transcript import Transcript
 from src.config import Config
 from src.errors import MeetingVideoChapterError
+
+
+def _load_existing_chapters(chapters_raw_path: str) -> List[Chapter]:
+    """Load chapters from an existing chapters_raw.txt file.
+    
+    Args:
+        chapters_raw_path: Path to the existing chapters_raw.txt file
+        
+    Returns:
+        List of Chapter objects parsed from the file
+        
+    Raises:
+        MeetingVideoChapterError: If the file cannot be parsed or contains invalid data
+    """
+    try:
+        with open(chapters_raw_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Handle both old and new formats
+        if isinstance(data, dict) and 'chapters' in data:
+            # New format with chapters and notes
+            chapters_data = data['chapters']
+        elif isinstance(data, list):
+            # Old format - direct list of chapters
+            chapters_data = data
+        else:
+            raise ValueError("Invalid chapters file format")
+        
+        # Parse chapters
+        chapters = []
+        for chapter_data in chapters_data:
+            # Handle different timestamp field names for backward compatibility
+            timestamp = chapter_data.get('timestamp_original', chapter_data.get('timestamp', 0))
+            title = chapter_data.get('title', '')
+            
+            if not title:
+                continue  # Skip chapters without titles
+                
+            chapters.append(Chapter(timestamp=timestamp, title=title))
+        
+        if not chapters:
+            raise ValueError("No valid chapters found in file")
+            
+        return chapters
+        
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        raise MeetingVideoChapterError(
+            f"Failed to parse existing chapters file: {chapters_raw_path}",
+            {"cause": str(e), "suggestion": "Delete the file to regenerate chapters"}
+        )
+    except Exception as e:
+        raise MeetingVideoChapterError(
+            f"Error reading chapters file: {chapters_raw_path}",
+            {"cause": str(e)}
+        )
 
 
 @dataclass
@@ -143,20 +199,12 @@ def run_pipeline(mkv_path: str, config: Config, progress_callback=None) -> Pipel
         result.step_failed = "chapter identification"
         if config.skip_existing and chapters_raw_path.exists():
             # Reuse existing chapters file (Requirement 7.3)
-            # For backward compatibility, we need to parse the existing response
-            # Since we can't easily recreate the provider that generated it,
-            # we'll create a new analyzer and let it handle the analysis
-            analyzer = ChapterAnalyzer(config)
-            chapters = analyzer.analyze(
-                transcript, 
-                save_raw_response=str(chapters_raw_path),
-                save_notes=str(notes_path)
-            )
+            chapters = _load_existing_chapters(str(chapters_raw_path))
             result.chapters = chapters
             result.chapters_file = str(chapters_raw_path)
             if notes_path.exists():
                 result.notes_file = str(notes_path)
-            warnings.append(f"Reusing existing transcript but re-analyzing with current AI provider configuration")
+            warnings.append(f"Reusing existing chapters file: {chapters_raw_path}")
         else:
             analyzer = ChapterAnalyzer(config)
             chapters = analyzer.analyze(

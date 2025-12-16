@@ -89,6 +89,12 @@ example:
 docker compose run --rm app python -m src.main "/videos/2025-12-16 10-01-47.mkv" --output-dir /workspace/output
 ```
 
+##### To download an new ollama model: 
+```bash
+docker compose run --rm app ollama pull phi4-reasoning
+```
+
+
 #### 1. Clone or Download the Repository
 
 ```bash

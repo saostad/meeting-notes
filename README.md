@@ -84,74 +84,10 @@ docker run --rm --gpus all \
 #### Using Docker Compose
 
 For easier management, use the provided Docker Compose configuration:
-
-**CPU-only:**
+example:
 ```bash
-# Set your API key
-export GEMINI_API_KEY=your_api_key_here
-
-# Run CPU version
-docker-compose --profile cpu up meeting-video-tool-cpu
+docker compose run --rm app python -m src.main "/videos/2025-12-16 10-01-47.mkv" --output-dir /workspace/output
 ```
-
-**GPU-enabled:**
-```bash
-# Set your API key
-export GEMINI_API_KEY=your_api_key_here
-
-# Run GPU version (requires NVIDIA Container Toolkit)
-docker-compose --profile gpu up meeting-video-tool-gpu
-```
-
-#### Docker Environment Variables
-
-The Docker container supports all the same environment variables as the native installation:
-
-```bash
-docker run --rm \
-  -v $(pwd)/videos:/input:ro \
-  -v $(pwd)/output:/output \
-  -e GEMINI_API_KEY=your_api_key_here \
-  -e WHISPER_MODEL=openai/whisper-medium \
-  -e SKIP_EXISTING=true \
-  -e OVERLAY_CHAPTER_TITLES=true \
-  meeting-video-tool:cpu \
-  python -m src.main /input/meeting.mkv
-```
-
-#### Volume Mounts
-
-- `/input` - Mount your video files here (read-only recommended)
-- `/output` - Processed files will be written here
-- `/cache` - Model weights and temporary files (optional, for persistence)
-
-#### GPU Setup for Docker
-
-To use GPU acceleration with Docker:
-
-1. **Install NVIDIA Container Toolkit:**
-   ```bash
-   # Ubuntu/Debian
-   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-   curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-     sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-     sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-   sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-   sudo systemctl restart docker
-   ```
-
-2. **Verify GPU access:**
-   ```bash
-   docker run --rm --gpus all nvidia/cuda:12.1-runtime-ubuntu22.04 nvidia-smi
-   ```
-
-3. **Build and run GPU image:**
-   ```bash
-   ./build-docker.sh --type gpu
-   docker run --rm --gpus all meeting-video-tool:gpu nvidia-smi
-   ```
-
-### Option 2: Native Installation
 
 #### 1. Clone or Download the Repository
 

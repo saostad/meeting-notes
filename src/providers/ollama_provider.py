@@ -24,7 +24,7 @@ class OllamaProvider(BaseAIProvider):
     """
     
     def __init__(self, model_name: str = "phi4", base_url: str = "http://localhost:11434", 
-                 timeout: int = 300, **kwargs):
+                 timeout: int = 600, **kwargs):
         """Initialize the Ollama provider.
         
         Args:

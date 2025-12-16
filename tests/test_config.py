@@ -288,7 +288,7 @@ class TestAIProviderConfig:
         assert config.local_model_name == "phi4"
         assert config.local_model_framework == "auto"
         assert config.ollama_base_url == "http://localhost:11434"
-        assert config.analysis_timeout == 300
+        assert config.analysis_timeout == 600
         assert config.use_gpu is True
     
     def test_ai_provider_env_vars(self, monkeypatch):

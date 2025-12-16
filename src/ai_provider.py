@@ -26,7 +26,7 @@ class ProviderConfig:
     provider_type: str
     model_name: str
     parameters: Dict[str, Any] = field(default_factory=dict)
-    timeout: int = 300
+    timeout: int = 600
     max_retries: int = 2
 
 

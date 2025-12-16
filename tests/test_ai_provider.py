@@ -49,7 +49,7 @@ class TestProviderConfig:
         assert config.provider_type == "test"
         assert config.model_name == "test-model"
         assert config.parameters == {}
-        assert config.timeout == 300
+        assert config.timeout == 600
         assert config.max_retries == 2
     
     def test_provider_config_custom_values(self):

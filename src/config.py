@@ -61,7 +61,7 @@ class Config:
     model_parameters: Optional[dict] = None
     
     # Performance settings
-    analysis_timeout: int = 300
+    analysis_timeout: int = 600
     max_memory_usage: Optional[int] = None
     use_gpu: bool = True
     
@@ -104,7 +104,7 @@ class Config:
         model_parameters_str = os.getenv("MODEL_PARAMETERS", "{}")
         
         # Performance settings
-        analysis_timeout_str = os.getenv("ANALYSIS_TIMEOUT", "300")
+        analysis_timeout_str = os.getenv("ANALYSIS_TIMEOUT", "600")
         max_memory_usage_str = os.getenv("MAX_MEMORY_USAGE", "")
         use_gpu_str = os.getenv("USE_GPU", "true").lower()
         
@@ -118,7 +118,7 @@ class Config:
         try:
             analysis_timeout = int(analysis_timeout_str)
         except ValueError:
-            analysis_timeout = 300
+            analysis_timeout = 600
         
         max_memory_usage = None
         if max_memory_usage_str:

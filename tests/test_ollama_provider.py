@@ -24,7 +24,7 @@ class TestOllamaProvider:
         
         assert provider.model_name == "phi4"
         assert provider.base_url == "http://localhost:11434"
-        assert provider.timeout == 300
+        assert provider.timeout == 600
         assert provider.model_parameters["temperature"] == 0.1
         assert provider.model_parameters["num_predict"] == 4000
     

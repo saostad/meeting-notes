@@ -65,6 +65,10 @@ class Config:
     max_memory_usage: Optional[int] = None
     use_gpu: bool = True
     
+    # Review settings
+    enable_review: bool = False
+    review_passes: int = 1
+    
     @classmethod
     def load(cls, env_file: str = ".env") -> "Config":
         """Load configuration from .env file and environment variables.
@@ -108,17 +112,29 @@ class Config:
         max_memory_usage_str = os.getenv("MAX_MEMORY_USAGE", "")
         use_gpu_str = os.getenv("USE_GPU", "true").lower()
         
+        # Review settings
+        enable_review_str = os.getenv("ENABLE_REVIEW", "false").lower()
+        review_passes_str = os.getenv("REVIEW_PASSES", "1")
+        
         # Parse boolean values
         skip_existing = skip_existing_str in ("true", "1", "yes", "on")
         overlay_chapter_titles = overlay_chapter_titles_str in ("true", "1", "yes", "on")
         enable_fallback = enable_fallback_str in ("true", "1", "yes", "on")
         use_gpu = use_gpu_str in ("true", "1", "yes", "on")
+        enable_review = enable_review_str in ("true", "1", "yes", "on")
         
         # Parse numeric values
         try:
             analysis_timeout = int(analysis_timeout_str)
         except ValueError:
             analysis_timeout = 600
+        
+        try:
+            review_passes = int(review_passes_str)
+            if review_passes < 1:
+                review_passes = 1
+        except ValueError:
+            review_passes = 1
         
         max_memory_usage = None
         if max_memory_usage_str:
@@ -152,7 +168,9 @@ class Config:
             model_parameters=model_parameters,
             analysis_timeout=analysis_timeout,
             max_memory_usage=max_memory_usage,
-            use_gpu=use_gpu
+            use_gpu=use_gpu,
+            enable_review=enable_review,
+            review_passes=review_passes
         )
         
         # Validate configuration
@@ -223,6 +241,13 @@ class Config:
         
         if self.max_memory_usage is not None and self.max_memory_usage <= 0:
             errors.append("Invalid MAX_MEMORY_USAGE: must be positive or None")
+        
+        # Validate review settings
+        if self.review_passes < 1:
+            errors.append("Invalid REVIEW_PASSES: must be at least 1")
+        
+        if self.review_passes > 10:
+            errors.append("Invalid REVIEW_PASSES: maximum of 10 passes allowed to prevent excessive processing")
         
         # Validate output directory if specified
         if self.output_dir:

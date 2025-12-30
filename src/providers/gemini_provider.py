@@ -13,6 +13,7 @@ from src.ai_provider import BaseAIProvider
 from src.chapter import Chapter, validate_chapter_list
 from src.transcript import Transcript
 from src.errors import ValidationError, DependencyError, ProcessingError
+from src.prompts import format_transcript_analysis_prompt
 
 
 class GeminiProvider(BaseAIProvider):
@@ -102,8 +103,8 @@ class GeminiProvider(BaseAIProvider):
                 {"operation": "chapter identification", "provider": "GeminiProvider"}
             )
         
-        # Format the prompt
-        prompt = self._format_prompt(transcript)
+        # Format the prompt using centralized prompt system
+        prompt = format_transcript_analysis_prompt(transcript)
         
         # Call Gemini API
         try:
@@ -174,62 +175,7 @@ class GeminiProvider(BaseAIProvider):
         
         return chapters, notes
     
-    def _format_prompt(self, transcript: Transcript) -> str:
-        """Format a transcript into a prompt for Gemini.
-        
-        Args:
-            transcript: The transcript to format
-            
-        Returns:
-            Formatted prompt string
-        """
-        # Build the transcript text with timestamps
-        transcript_text = ""
-        for segment in transcript.segments:
-            timestamp_str = self._format_timestamp(segment.start_time)
-            transcript_text += f"[{timestamp_str}] {segment.text}\n"
-        
-        prompt = f"""Analyze the following meeting transcript and identify logical chapter boundaries.
-For each chapter, provide:
-1. The timestamp (in seconds) where the chapter begins
-2. A concise, descriptive title for the chapter
 
-The chapters should represent major topic changes or sections in the meeting.
-Aim for 3-80 chapters depending on the content length and structure.
-
-Additionally, extract any actionable instructions or tasks mentioned in the meeting. 
-"notes" should be a list of actionable instructions and tasks found in the meeting. If none found, leave this as an empty string.
-be specific for note details, if possible include order/index of the steps mentioned in meeting to guide the person.
-Look for:
-- Technical steps that need to be done (e.g., "first do this, then do that")
-- Action items assigned to people
-- Setup instructions or configuration steps
-- Implementation tasks or procedures
-- Any sequential instructions or workflows
-
-CRITICAL RULES FOR TIMESTAMPS:
-- Extract timestamps directly from the "start_time" fields without modification or rounding.
-- the "start_time" field value is in seconds, use that as the value of "timestamp_original" field.
-- Violation of these rules will invalidate the entire response.
-
-Return your response in this exact JSON format:
-{{
-  "chapters": [
-    {{"timestamp_original": 0.0,"timestamp_in_minutes": 0.0, "title": "Introduction"}},
-    {{"timestamp_original": 120.5,"timestamp_in_minutes": 2.0, "title": "Main Discussion"}},
-    {{"timestamp_original": 300.0,"timestamp_in_minutes": 5.0, "title": "Conclusion"}}
-  ],
-  "notes": [
-    {{"timestamp_original": 0.0,"timestamp_in_minutes": 0.0, "person_name": "Saeid", "details": "Switch the test workspace branch back to main after the PR merge."}},
-  ]
-}}
-
-IMPORTANT: Return ONLY the JSON object, no other text or explanation.
-
-Transcript:
-{transcript_text}
-"""
-        return prompt
     
     def _parse_response(self, response: str) -> Tuple[List[Chapter], List[Dict[str, Any]]]:
         """Parse Gemini API response into Chapter objects and notes.
@@ -369,20 +315,124 @@ Transcript:
                 {"operation": "chapter parsing", "provider": "GeminiProvider"}
             )
         
+        # Sort chapters by timestamp to ensure chronological order
+        chapters.sort(key=lambda c: c.timestamp)
+        
+        # Remove duplicate timestamps by keeping the first occurrence
+        seen_timestamps = set()
+        unique_chapters = []
+        for chapter in chapters:
+            if chapter.timestamp not in seen_timestamps:
+                seen_timestamps.add(chapter.timestamp)
+                unique_chapters.append(chapter)
+        
+        chapters = unique_chapters
+        
         return chapters, notes
     
-    def _format_timestamp(self, seconds: float) -> str:
-        """Format seconds as MM:SS timestamp.
+    def review_analysis(self, original_result: Dict[str, Any], transcript: Transcript, save_raw_response: str = None) -> Tuple[List[Chapter], List[Dict[str, Any]]]:
+        """Review and improve an existing analysis result using Gemini API.
         
         Args:
-            seconds: Time in seconds
+            original_result: The original analysis result with chapters and notes
+            transcript: The original transcript for reference
+            save_raw_response: Optional path to save raw AI response
             
         Returns:
-            Formatted timestamp string
+            Tuple of (improved chapters list, improved notes list)
+            
+        Raises:
+            ValidationError: If inputs are invalid
+            DependencyError: If Gemini API call fails
+            ProcessingError: If review or parsing fails
         """
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        return f"{minutes:02d}:{secs:02d}"
+        if not self.model:
+            raise DependencyError(
+                "Gemini provider not properly initialized",
+                {"provider": "GeminiProvider"}
+            )
+        
+        if not original_result or not isinstance(original_result, dict):
+            raise ValidationError(
+                "Invalid original result for review",
+                {"provider": "GeminiProvider"}
+            )
+        
+        if not transcript.segments:
+            raise ValidationError(
+                "Cannot review with empty transcript",
+                {"provider": "GeminiProvider"}
+            )
+        
+        # Format the review prompt
+        from src.prompts import format_review_prompt
+        prompt = format_review_prompt(original_result, transcript)
+        
+        # Call Gemini API
+        try:
+            response = self.model.generate_content(prompt)
+            
+            if not response or not response.text:
+                raise DependencyError(
+                    "Gemini API returned empty response during review",
+                    {
+                        "dependency": "Gemini API",
+                        "model": self.model_name,
+                        "provider": "GeminiProvider"
+                    }
+                )
+            
+            response_text = response.text
+            
+            # Save raw response if requested
+            if save_raw_response:
+                with open(save_raw_response, 'w', encoding='utf-8') as f:
+                    f.write(response_text)
+            
+        except Exception as e:
+            # Check for rate limit errors
+            error_str = str(e).lower()
+            if "rate limit" in error_str or "quota" in error_str:
+                raise DependencyError(
+                    "Gemini API rate limit exceeded during review",
+                    {
+                        "dependency": "Gemini API",
+                        "model": self.model_name,
+                        "cause": str(e),
+                        "suggestion": "Please wait a few moments and try again",
+                        "provider": "GeminiProvider"
+                    }
+                )
+            else:
+                raise DependencyError(
+                    "Gemini API call failed during review",
+                    {
+                        "dependency": "Gemini API",
+                        "model": self.model_name,
+                        "cause": str(e),
+                        "provider": "GeminiProvider"
+                    }
+                )
+        
+        # Parse the response
+        chapters, notes = self._parse_response(response_text)
+        
+        # Validate chapter structure
+        try:
+            validate_chapter_list(chapters)
+        except ValueError as e:
+            raise ProcessingError(
+                "Generated chapters from review have invalid structure",
+                {
+                    "operation": "chapter validation",
+                    "cause": str(e),
+                    "provider": "GeminiProvider"
+                }
+            )
+        
+        return chapters, notes
+    
+
     
     def get_provider_info(self) -> Dict[str, Any]:
         """Return provider information for logging and debugging.

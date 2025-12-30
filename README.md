@@ -12,6 +12,7 @@ The Meeting Video Chapter Tool processes MKV video files from recorded meetings,
 - **AI Transcription**: Transcribes audio using Whisper large-v3-turbo model
 - **Intelligent Chapter Detection**: Identifies logical chapter boundaries using Gemini AI
 - **Actionable Notes Extraction**: Automatically extracts instructions and tasks from meeting transcripts
+- **Iterative Review System**: Optional multi-pass analysis to improve chapter and note detection quality
 - **Chapter Embedding**: Adds chapter markers directly to video files
 - **Pipeline Processing**: Complete end-to-end processing with a single command
 - **Skip Existing Files**: Optionally reuse intermediate files from previous runs
@@ -165,6 +166,8 @@ Configuration is loaded from the `.env` file or environment variables. Environme
 | `OUTPUT_DIR` | No | Same as input file | Directory where generated files will be saved |
 | `SKIP_EXISTING` | No | `false` | Skip regenerating files that already exist |
 | `OVERLAY_CHAPTER_TITLES` | No | `false` | Overlay chapter titles on video (top-right corner) |
+| `ENABLE_REVIEW` | No | `false` | Enable iterative review to improve analysis quality |
+| `REVIEW_PASSES` | No | `1` | Number of review passes (1-10, only used if ENABLE_REVIEW=true) |
 
 ### Example .env File
 
@@ -182,6 +185,10 @@ SKIP_EXISTING=false
 
 # Optional: Video overlay configuration
 OVERLAY_CHAPTER_TITLES=false
+
+# Optional: Review settings for improved analysis quality
+ENABLE_REVIEW=true
+REVIEW_PASSES=2
 ```
 
 ## Usage

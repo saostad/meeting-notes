@@ -14,6 +14,7 @@ from src.ai_provider import BaseAIProvider
 from src.chapter import Chapter
 from src.transcript import Transcript
 from src.errors import ValidationError, DependencyError, ProcessingError
+from src.prompts import format_transcript_analysis_prompt
 
 
 class OllamaProvider(BaseAIProvider):
@@ -122,8 +123,8 @@ class OllamaProvider(BaseAIProvider):
                 }
             )
         
-        # Format the prompt
-        prompt = self._format_prompt(transcript)
+        # Format the prompt using centralized prompt system
+        prompt = format_transcript_analysis_prompt(transcript)
         
         # Log the prompt for debugging
         print(f"🔍 PROMPT DEBUG - Sending to Ollama model '{self.model_name}':")
@@ -237,63 +238,7 @@ class OllamaProvider(BaseAIProvider):
         
         return response_text
     
-    def _format_prompt(self, transcript: Transcript) -> str:
-        """Format a transcript into a prompt for the Ollama model.
-        
-        Args:
-            transcript: The transcript to format
-            
-        Returns:
-            Formatted prompt string
-        """
-        # Build the transcript text with timestamps
-        transcript_text = ""
-        for segment in transcript.segments:
-            timestamp_str = self._format_timestamp(segment.start_time)
-            transcript_text += f"[{timestamp_str}] {segment.text}\n"
-        
-        json_format = """{
-  "chapters": [
-    {"timestamp_original": 0.0,"timestamp_in_minutes": 0.0, "title": "Introduction"},
-    {"timestamp_original": 120.5,"timestamp_in_minutes": 2.0, "title": "Main Discussion"},
-    {"timestamp_original": 300.0,"timestamp_in_minutes": 5.0, "title": "Conclusion"}
-  ],
-  "notes": [
-    {"timestamp_original": 0.0,"timestamp_in_minutes": 0.0, "person_name": "Saeid", "details": "Switch the test workspace branch back to main after the PR merge."},
-  ]
-}"""
-        
-        prompt = f"""Analyze the following meeting transcript and identify logical chapter boundaries.
-For each chapter, provide:
-1. The timestamp (in seconds) where the chapter begins
-2. A concise, descriptive title for the chapter
 
-The chapters should represent major topic changes or sections in the meeting.
-Aim for 3-80 chapters depending on the content length and structure.
-
-Additionally, extract any actionable instructions or tasks mentioned in the meeting. 
-"notes" should be a list of actionable instructions and tasks found in the meeting. If none found, leave this as an empty array.
-Be specific for note details, if possible include order/index of the steps mentioned in meeting to guide the person.
-Look for:
-- Technical steps that need to be done (e.g., "first do this, then do that")
-- Action items assigned to people
-- Setup instructions or configuration steps
-- Implementation tasks or procedures
-- Any sequential instructions or workflows
-
-CRITICAL RULES FOR TIMESTAMPS:
-- Extract timestamps directly from the transcript without modification or rounding.
-- Violation of these rules will invalidate the entire response.
-
-Return your response in this exact JSON format:
-{json_format}
-
-CRITICAL: You MUST return ONLY valid JSON in the exact format specified above. Do not include any explanations, markdown formatting, or additional text. Start your response with {{ and end with }}.
-
-Transcript:
-{transcript_text}
-"""
-        return prompt
     
     def _parse_response(self, response: str) -> Tuple[List[Chapter], List[Dict[str, Any]]]:
         """Parse Ollama model response into Chapter objects and notes.
@@ -426,20 +371,103 @@ Transcript:
                 {"operation": "chapter parsing"}
             )
         
+        # Sort chapters by timestamp to ensure chronological order
+        chapters.sort(key=lambda c: c.timestamp)
+        
+        # Remove duplicate timestamps by keeping the first occurrence
+        seen_timestamps = set()
+        unique_chapters = []
+        for chapter in chapters:
+            if chapter.timestamp not in seen_timestamps:
+                seen_timestamps.add(chapter.timestamp)
+                unique_chapters.append(chapter)
+        
+        chapters = unique_chapters
+        
         return chapters, notes
     
-    def _format_timestamp(self, seconds: float) -> str:
-        """Format seconds as MM:SS timestamp.
+    def review_analysis(self, original_result: Dict[str, Any], transcript: Transcript, save_raw_response: str = None) -> Tuple[List[Chapter], List[Dict[str, Any]]]:
+        """Review and improve an existing analysis result using Ollama model.
         
         Args:
-            seconds: Time in seconds
+            original_result: The original analysis result with chapters and notes
+            transcript: The original transcript for reference
+            save_raw_response: Optional path to save raw AI response
             
         Returns:
-            Formatted timestamp string
+            Tuple of (improved chapters list, improved notes list)
+            
+        Raises:
+            ValidationError: If inputs are invalid
+            DependencyError: If Ollama service is unavailable
+            ProcessingError: If review or parsing fails
         """
-        minutes = int(seconds // 60)
-        secs = int(seconds % 60)
-        return f"{minutes:02d}:{secs:02d}"
+        if not original_result or not isinstance(original_result, dict):
+            raise ValidationError(
+                "Invalid original result for review",
+                {"provider": "OllamaProvider"}
+            )
+        
+        if not transcript.segments:
+            raise ValidationError(
+                "Cannot review with empty transcript",
+                {"provider": "OllamaProvider"}
+            )
+        
+        if not self.is_available():
+            raise DependencyError(
+                f"Ollama service unavailable or model '{self.model_name}' not found",
+                {
+                    "provider": "OllamaProvider",
+                    "model": self.model_name,
+                    "base_url": self.base_url,
+                    "suggestion": f"Ensure Ollama is running and model '{self.model_name}' is installed"
+                }
+            )
+        
+        # Format the review prompt
+        from src.prompts import format_review_prompt
+        prompt = format_review_prompt(original_result, transcript)
+        
+        # Call Ollama API
+        try:
+            response_text = self._call_ollama_api(prompt)
+        except Exception as e:
+            raise DependencyError(
+                "Ollama API call failed during review",
+                {
+                    "provider": "OllamaProvider",
+                    "model": self.model_name,
+                    "cause": str(e)
+                }
+            )
+        
+        # Save raw response if requested
+        if save_raw_response and response_text:
+            try:
+                with open(save_raw_response, 'w', encoding='utf-8') as f:
+                    f.write(response_text)
+            except Exception as e:
+                # Don't fail the review if saving fails, just warn
+                print(f"Warning: Failed to save raw review response: {e}")
+        
+        # Parse the response
+        try:
+            chapters, notes = self._parse_response(response_text)
+        except Exception as e:
+            raise ProcessingError(
+                "Failed to parse Ollama review response",
+                {
+                    "provider": "OllamaProvider",
+                    "model": self.model_name,
+                    "cause": str(e),
+                    "response_preview": response_text[:200] if response_text else "No response"
+                }
+            )
+        
+        return chapters, notes
+    
+
     
     def get_provider_info(self) -> Dict[str, Any]:
         """Return provider information for logging and debugging.

@@ -3,7 +3,7 @@ services:
   app:
     # Use pre-built image from GitHub Container Registry
     # To build locally instead, comment out 'image' and uncomment 'build: .'
-    # build: .
+    build: .
     image: ghcr.io/saostad/meeting-video-tool:latest
     container_name: meeting-video-tool-dev
     

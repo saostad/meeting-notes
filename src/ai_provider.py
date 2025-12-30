@@ -84,6 +84,23 @@ class BaseAIProvider(ABC):
         pass
     
     @abstractmethod
+    def review_analysis(self, original_result: Dict[str, Any], transcript: Transcript, save_raw_response: str = None) -> Tuple[List[Chapter], List[Dict[str, Any]]]:
+        """Review and improve an existing analysis result.
+        
+        Args:
+            original_result: The original analysis result with chapters and notes
+            transcript: The original transcript for reference
+            save_raw_response: Optional path to save raw AI response
+            
+        Returns:
+            Tuple of (improved chapters list, improved notes list)
+            
+        Raises:
+            Various exceptions depending on the provider implementation
+        """
+        pass
+    
+    @abstractmethod
     def get_provider_info(self) -> Dict[str, Any]:
         """Return provider information for logging and debugging.
         
@@ -241,6 +258,35 @@ class AIProviderManager:
         # Report provider status at start
         self._report_provider_status()
         
+        # Perform initial analysis
+        chapters, notes = self._perform_analysis(transcript, save_raw_response, save_notes)
+        
+        # Perform review passes if enabled
+        if self.config.enable_review and self.config.review_passes > 1:
+            chapters, notes = self._perform_review_passes(
+                chapters, notes, transcript, save_raw_response, save_notes
+            )
+        
+        return chapters, notes
+    
+    def _perform_analysis(self, transcript: Transcript, save_raw_response: str = None, save_notes: str = None) -> Tuple[List[Chapter], List[Dict[str, Any]]]:
+        """Perform the initial transcript analysis.
+        
+        Args:
+            transcript: The transcript to analyze
+            save_raw_response: Optional path to save raw AI response
+            save_notes: Optional path to save extracted notes
+            
+        Returns:
+            Tuple of (chapters list, notes list)
+        """
+        import time
+        import json
+        from src.errors import ProcessingError, DependencyError, ValidationError
+        
+        processing_start = time.time()
+        primary_error = None
+        
         # Try primary provider first
         if self.primary_provider:
             primary_info = self.primary_provider.get_provider_info()
@@ -252,7 +298,6 @@ class AIProviderManager:
                         print("⚠️  Note: Using external API - data will be sent to external services")
                     
                     chapters, notes = self.primary_provider.analyze_transcript(transcript, save_raw_response, save_notes)
-                    provider_used = primary_info['name']
                     
                     # Save outputs if requested
                     if save_notes and notes:
@@ -260,7 +305,7 @@ class AIProviderManager:
                             json.dump(notes, f, indent=2, ensure_ascii=False)
                     
                     processing_time = time.time() - processing_start
-                    print(f"✅ Analysis completed successfully using {provider_used} in {processing_time:.2f}s")
+                    print(f"✅ Analysis completed successfully using {primary_info['name']} in {processing_time:.2f}s")
                     
                     return chapters, notes
                     
@@ -316,7 +361,6 @@ class AIProviderManager:
                         print("⚠️  Note: Using external API fallback - data will be sent to external services")
                     
                     chapters, notes = self.fallback_provider.analyze_transcript(transcript, save_raw_response, save_notes)
-                    provider_used = fallback_info['name']
                     
                     # Save outputs if requested
                     if save_notes and notes:
@@ -324,7 +368,7 @@ class AIProviderManager:
                             json.dump(notes, f, indent=2, ensure_ascii=False)
                     
                     processing_time = time.time() - processing_start
-                    print(f"✅ Analysis completed using fallback provider {provider_used} in {processing_time:.2f}s")
+                    print(f"✅ Analysis completed using fallback provider {fallback_info['name']} in {processing_time:.2f}s")
                     
                     return chapters, notes
                     
@@ -370,6 +414,91 @@ class AIProviderManager:
             }
         
         raise DependencyError(error_msg, context)
+    
+    def _perform_review_passes(self, initial_chapters: List[Chapter], initial_notes: List[Dict[str, Any]], 
+                              transcript: Transcript, save_raw_response: str = None, save_notes: str = None) -> Tuple[List[Chapter], List[Dict[str, Any]]]:
+        """Perform iterative review passes to improve analysis quality.
+        
+        Args:
+            initial_chapters: Initial chapters from first analysis
+            initial_notes: Initial notes from first analysis
+            transcript: The original transcript
+            save_raw_response: Optional path to save raw AI response
+            save_notes: Optional path to save extracted notes
+            
+        Returns:
+            Tuple of (improved chapters list, improved notes list)
+        """
+        import time
+        import json
+        from src.chapter import Chapter
+        
+        current_chapters = initial_chapters
+        current_notes = initial_notes
+        
+        print(f"🔄 Starting {self.config.review_passes - 1} review pass(es) to improve analysis quality...")
+        
+        for pass_num in range(2, self.config.review_passes + 1):
+            print(f"📝 Review pass {pass_num}/{self.config.review_passes}")
+            
+            # Create the current result structure for review
+            current_result = {
+                "chapters": [
+                    {
+                        "timestamp_original": chapter.timestamp,
+                        "timestamp_in_minutes": chapter.timestamp / 60.0,
+                        "title": chapter.title
+                    }
+                    for chapter in current_chapters
+                ],
+                "notes": current_notes
+            }
+            
+            # Perform review with the best available provider
+            provider_to_use = None
+            if self.primary_provider and self.primary_provider.is_available():
+                provider_to_use = self.primary_provider
+            elif self.fallback_provider and self.fallback_provider.is_available():
+                provider_to_use = self.fallback_provider
+            
+            if not provider_to_use:
+                print(f"⚠️  No providers available for review pass {pass_num}, using current results")
+                break
+            
+            try:
+                review_start = time.time()
+                provider_info = provider_to_use.get_provider_info()
+                
+                # Generate review-specific save paths
+                review_save_path = None
+                if save_raw_response:
+                    base_path = save_raw_response.rsplit('.', 1)[0] if '.' in save_raw_response else save_raw_response
+                    review_save_path = f"{base_path}_review_pass_{pass_num}.txt"
+                
+                reviewed_chapters, reviewed_notes = provider_to_use.review_analysis(
+                    current_result, transcript, review_save_path
+                )
+                
+                review_time = time.time() - review_start
+                
+                # Update current results
+                current_chapters = reviewed_chapters
+                current_notes = reviewed_notes
+                
+                print(f"✅ Review pass {pass_num} completed using {provider_info['name']} in {review_time:.2f}s")
+                print(f"   Chapters: {len(current_chapters)}, Notes: {len(current_notes)}")
+                
+            except Exception as e:
+                print(f"⚠️  Review pass {pass_num} failed: {type(e).__name__}: {e}")
+                print(f"   Continuing with results from previous pass")
+                break
+        
+        # Save final reviewed results if requested
+        if save_notes and current_notes:
+            with open(save_notes, 'w', encoding='utf-8') as f:
+                json.dump(current_notes, f, indent=2, ensure_ascii=False)
+        
+        return current_chapters, current_notes
     
     def get_available_providers(self) -> List[str]:
         """Get list of currently available providers.

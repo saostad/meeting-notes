@@ -356,9 +356,9 @@ That's the result.'''
         assert "available" in info
     
     def test_format_timestamp(self):
-        """Test _format_timestamp method."""
-        provider = OllamaProvider()
+        """Test _format_timestamp function from prompts module."""
+        from src.prompts import _format_timestamp
         
-        assert provider._format_timestamp(0) == "00:00"
-        assert provider._format_timestamp(65) == "01:05"
-        assert provider._format_timestamp(3661) == "61:01"
+        assert _format_timestamp(0) == "00:00"
+        assert _format_timestamp(65) == "01:05"
+        assert _format_timestamp(3661) == "61:01"

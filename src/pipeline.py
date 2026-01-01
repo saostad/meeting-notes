@@ -19,6 +19,7 @@ from src.chapter import Chapter
 from src.transcript import Transcript
 from src.config import Config
 from src.errors import MeetingVideoChapterError
+from src.file_detector import SimpleFileDetector as FileTypeDetector
 
 
 def _load_existing_chapters(chapters_raw_path: str) -> List[Chapter]:
@@ -94,6 +95,8 @@ class PipelineResult:
         step_failed: Name of the step that failed (if any)
         step_timings: Dictionary of step names to execution times in seconds
         total_time: Total pipeline execution time in seconds
+        input_type: Type of input file ('audio' or 'video')
+        audio_chapters_file: Path to audio-specific chapters file (for audio inputs)
     """
     success: bool
     output_mkv: Optional[str] = None
@@ -108,22 +111,25 @@ class PipelineResult:
     step_failed: Optional[str] = None
     step_timings: dict = field(default_factory=dict)
     total_time: float = 0.0
+    input_type: str = 'video'  # Default to video for backward compatibility
+    audio_chapters_file: Optional[str] = None
 
 
-def run_pipeline(mkv_path: str, config: Config, progress_callback=None) -> PipelineResult:
-    """Execute the complete video chapter processing pipeline.
+def run_pipeline(input_path: str, config: Config, progress_callback=None) -> PipelineResult:
+    """Execute the complete audio/video chapter processing pipeline.
     
     This function orchestrates all processing steps in sequence:
-    1. Audio extraction from MKV
-    2. Transcription using Whisper
-    3. Chapter identification using Gemini
-    4. Chapter merging back into MKV
+    1. File type detection and validation
+    2. Audio extraction (for video) or direct audio use (for audio files)
+    3. Transcription using Whisper
+    4. Chapter identification using AI
+    5. Output generation (video with chapters or audio-specific outputs)
     
     The pipeline halts on the first error and reports which step failed.
     If skip_existing is enabled, existing intermediate files are reused.
     
     Args:
-        mkv_path: Path to the input MKV file
+        input_path: Path to the input audio or video file
         config: Configuration object with API keys and settings
         progress_callback: Optional callback function to report progress (step_num, step_name, status)
         
@@ -138,39 +144,59 @@ def run_pipeline(mkv_path: str, config: Config, progress_callback=None) -> Pipel
     step_timings = {}
     
     try:
-        mkv_file = Path(mkv_path)
+        input_file = Path(input_path)
+        
+        # Step 0: File Type Detection and Validation
+        file_type = FileTypeDetector.detect_file_type(input_path)
         
         # Determine output directory
         if config.output_dir:
             output_dir = Path(config.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
         else:
-            output_dir = mkv_file.parent
+            output_dir = input_file.parent
         
         # Define intermediate file paths
-        audio_path = output_dir / f"{mkv_file.stem}.mp3"
-        transcript_path = output_dir / f"{mkv_file.stem}_transcript.json"
-        chapters_raw_path = output_dir / f"{mkv_file.stem}_chapters_raw.txt"
-        notes_path = output_dir / f"{mkv_file.stem}_notes.json"
-        subtitle_path = output_dir / f"{mkv_file.stem}_chaptered.srt"
-        output_mkv_path = output_dir / f"{mkv_file.stem}_chaptered.mkv"
+        audio_path = output_dir / f"{input_file.stem}.mp3"
+        transcript_path = output_dir / f"{input_file.stem}_transcript.json"
+        chapters_raw_path = output_dir / f"{input_file.stem}_chapters_raw.txt"
+        notes_path = output_dir / f"{input_file.stem}_notes.json"
+        subtitle_path = output_dir / f"{input_file.stem}_chaptered.srt"
         
-        # Step 1: Audio Extraction
+        # Set input type in result
+        result.input_type = file_type
+        
+        # Step 1: Audio Extraction (conditional based on input type)
         step_start_time = time.time()
         if progress_callback:
-            progress_callback(1, "Extracting audio", "start")
-        result.step_failed = "audio extraction"
-        if config.skip_existing and audio_path.exists():
-            # Reuse existing audio file
-            result.audio_file = str(audio_path)
-            warnings.append(f"Reusing existing audio file: {audio_path}")
-        else:
-            extractor = AudioExtractor()
-            result.audio_file = extractor.extract(str(mkv_path), str(audio_path))
-        step_timings["audio_extraction"] = time.time() - step_start_time
+            if file_type == 'video':
+                progress_callback(1, "Extracting audio", "start")
+            else:
+                progress_callback(1, "Validating audio file", "start")
+        
+        result.step_failed = "audio processing"
+        
+        if file_type == 'video':
+            # Extract audio from video file
+            if config.skip_existing and audio_path.exists():
+                # Reuse existing audio file
+                result.audio_file = str(audio_path)
+                warnings.append(f"Reusing existing audio file: {audio_path}")
+            else:
+                extractor = AudioExtractor()
+                result.audio_file = extractor.extract(input_path, str(audio_path))
+        else:  # file_type == 'audio'
+            # Use audio file directly, but validate it first
+            FileTypeDetector.validate_audio_file(input_path)
+            result.audio_file = input_path
+            
+        step_timings["audio_processing"] = time.time() - step_start_time
         if progress_callback:
-            progress_callback(1, "Extracting audio", "complete")
-        print(f"⏱️  Step 1 completed in {step_timings['audio_extraction']:.2f}s")
+            if file_type == 'video':
+                progress_callback(1, "Extracting audio", "complete")
+            else:
+                progress_callback(1, "Validating audio file", "complete")
+        print(f"⏱️  Step 1 completed in {step_timings['audio_processing']:.2f}s")
         
         # Step 2: Transcription
         step_start_time = time.time()
@@ -221,22 +247,58 @@ def run_pipeline(mkv_path: str, config: Config, progress_callback=None) -> Pipel
             progress_callback(3, "Identifying chapters", "complete")
         print(f"⏱️  Step 3 completed in {step_timings['chapter_identification']:.2f}s")
         
-        # Step 4: Chapter Merging
+        # Step 4: Output Generation (conditional based on input type)
         step_start_time = time.time()
         if progress_callback:
-            progress_callback(4, "Merging chapters into video", "start")
-        result.step_failed = "chapter merging"
-        merger = ChapterMerger()
-        result.output_mkv = merger.merge(
-            str(mkv_path), 
-            chapters, 
-            str(output_mkv_path),
-            overlay_titles=config.overlay_chapter_titles
-        )
-        step_timings["chapter_merging"] = time.time() - step_start_time
+            if file_type == 'video':
+                progress_callback(4, "Merging chapters into video", "start")
+            else:
+                progress_callback(4, "Generating audio outputs", "start")
+        
+        result.step_failed = "output generation"
+        
+        if file_type == 'video':
+            # Generate chaptered video file
+            output_mkv_path = output_dir / f"{input_file.stem}_chaptered.mkv"
+            merger = ChapterMerger()
+            result.output_mkv = merger.merge(
+                input_path, 
+                chapters, 
+                str(output_mkv_path),
+                overlay_titles=config.overlay_chapter_titles
+            )
+        else:  # file_type == 'audio'
+            # Generate audio-specific outputs (chapters file with metadata)
+            audio_chapters_path = output_dir / f"{input_file.stem}_audio_chapters.json"
+            
+            # Create audio-specific chapters file with additional metadata
+            audio_chapters_data = {
+                "input_file": input_path,
+                "input_type": "audio",
+                "duration": getattr(chapters[-1], 'timestamp', 0) if chapters else 0,
+                "chapters": [
+                    {
+                        "timestamp": chapter.timestamp,
+                        "timestamp_formatted": f"{int(chapter.timestamp // 60):02d}:{int(chapter.timestamp % 60):02d}",
+                        "title": chapter.title
+                    }
+                    for chapter in chapters
+                ],
+                "total_chapters": len(chapters)
+            }
+            
+            with open(audio_chapters_path, 'w', encoding='utf-8') as f:
+                json.dump(audio_chapters_data, f, indent=2, ensure_ascii=False)
+            
+            result.audio_chapters_file = str(audio_chapters_path)
+        
+        step_timings["output_generation"] = time.time() - step_start_time
         if progress_callback:
-            progress_callback(4, "Merging chapters into video", "complete")
-        print(f"⏱️  Step 4 completed in {step_timings['chapter_merging']:.2f}s")
+            if file_type == 'video':
+                progress_callback(4, "Merging chapters into video", "complete")
+            else:
+                progress_callback(4, "Generating audio outputs", "complete")
+        print(f"⏱️  Step 4 completed in {step_timings['output_generation']:.2f}s")
         
         # Step 5: Generate Subtitle File
         # Generate SRT subtitle file from transcript for VLC and other players

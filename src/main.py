@@ -17,7 +17,8 @@ if __name__ == "__main__":
 
 from src.config import Config, ConfigurationError
 from src.pipeline import run_pipeline, PipelineResult
-from src.errors import MeetingVideoChapterError
+from src.errors import MeetingVideoChapterError, ValidationError, FileSystemError
+from src.file_detector import SimpleFileDetector as FileTypeDetector
 
 
 def format_result(result: PipelineResult) -> str:
@@ -48,6 +49,8 @@ def format_result(result: PipelineResult) -> str:
             lines.append(f"  Subtitles: {result.subtitle_file}")
         if result.output_mkv:
             lines.append(f"  Chaptered video: {result.output_mkv}")
+        if result.audio_chapters_file:
+            lines.append(f"  Audio chapters: {result.audio_chapters_file}")
         
         if result.chapters:
             lines.append("")
@@ -91,6 +94,8 @@ def format_result(result: PipelineResult) -> str:
                 lines.append(f"  Chapters: {result.chapters_file}")
             if result.notes_file:
                 lines.append(f"  Notes: {result.notes_file}")
+            if result.audio_chapters_file:
+                lines.append(f"  Audio chapters: {result.audio_chapters_file}")
         
         # Display warnings if any
         if result.warnings:
@@ -114,14 +119,15 @@ def main() -> int:
         Exit code (0 for success, 1 for failure)
     """
     parser = argparse.ArgumentParser(
-        description="Add chapter markers to meeting video files using automatic transcription and analysis.",
+        description="Add chapter markers to meeting audio and video files using automatic transcription and analysis.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   %(prog)s meeting.mkv
-  %(prog)s meeting.mkv --output-dir ./processed
+  %(prog)s meeting.mp3
+  %(prog)s recording.wav --output-dir ./processed
   %(prog)s meeting.mkv --skip-existing
-  %(prog)s meeting.mkv -o ./output -s
+  %(prog)s audio.flac -o ./output -s
 
 Configuration:
   Set GEMINI_API_KEY in environment or .env file.
@@ -131,7 +137,7 @@ Configuration:
     
     parser.add_argument(
         "input_file",
-        help="Path to the input MKV video file"
+        help="Path to the input audio or video file (supported formats: MP3, WAV, FLAC, M4A, MKV, MP4, AVI, MOV)"
     )
     
     parser.add_argument(
@@ -157,14 +163,18 @@ Configuration:
     args = parser.parse_args()
     
     try:
-        # Validate input file exists
+        # Validate input file exists and is supported format
         input_path = Path(args.input_file)
         if not input_path.exists():
             print(f"Error: Input file not found: {args.input_file}", file=sys.stderr)
             return 1
         
-        if not input_path.suffix.lower() == ".mkv":
-            print(f"Error: Input file must be an MKV file: {args.input_file}", file=sys.stderr)
+        # Detect and validate file type
+        try:
+            file_type = FileTypeDetector.detect_file_type(str(input_path))
+            print(f"Detected {file_type} file: {input_path.name}")
+        except (ValidationError, FileSystemError) as e:
+            print(str(e), file=sys.stderr)
             return 1
         
         # Load configuration
@@ -174,6 +184,19 @@ Configuration:
         except ConfigurationError as e:
             print(str(e), file=sys.stderr)
             return 1
+        
+        # Perform startup validation
+        print("Validating configuration...")
+        try:
+            validation_issues = config.validate_model_availability()
+            if validation_issues:
+                print("⚠️  Configuration warnings:")
+                for issue in validation_issues:
+                    print(f"   • {issue}")
+                print()  # Add blank line
+        except Exception as e:
+            print(f"Warning: Could not validate model availability: {e}")
+            print()  # Add blank line
         
         # Override config with command-line arguments
         if args.output_dir:

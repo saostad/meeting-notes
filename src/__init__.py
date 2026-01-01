@@ -1,0 +1,1 @@
+"""Meeting Video Chapter Tool package."""

@@ -3,6 +3,7 @@
 import os
 import pytest
 from pathlib import Path
+from unittest.mock import Mock, patch
 from src.config import Config, ConfigurationError
 
 
@@ -276,6 +277,15 @@ class TestAIProviderConfig:
         monkeypatch.delenv("ENABLE_FALLBACK", raising=False)
         monkeypatch.delenv("LOCAL_MODEL_NAME", raising=False)
         monkeypatch.delenv("LOCAL_MODEL_FRAMEWORK", raising=False)
+        monkeypatch.delenv("ANALYSIS_TIMEOUT", raising=False)
+        monkeypatch.delenv("WHISPER_MODEL", raising=False)
+        monkeypatch.delenv("GEMINI_MODEL", raising=False)
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        monkeypatch.delenv("SKIP_EXISTING", raising=False)
+        monkeypatch.delenv("OVERLAY_CHAPTER_TITLES", raising=False)
+        monkeypatch.delenv("MODEL_PARAMETERS", raising=False)
+        monkeypatch.delenv("ENABLE_REVIEW", raising=False)
+        monkeypatch.delenv("REVIEW_PASSES", raising=False)
         
         # Use non-existent env file to avoid loading project .env
         non_existent_env = tmp_path / "nonexistent.env"
@@ -311,3 +321,379 @@ class TestAIProviderConfig:
         assert config.ollama_base_url == "http://custom:8080"
         assert config.analysis_timeout == 600
         assert config.use_gpu is False
+
+
+class TestMultiModelConfig:
+    """Tests for multi-model review configuration."""
+    
+    def test_parse_review_models_valid_sequence(self, monkeypatch):
+        """Test parsing valid comma-separated model sequence."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo,llama3.2")
+        
+        config = Config.load()
+        
+        assert config.review_models == ["phi4", "mistral-nemo", "llama3.2"]
+        assert config.review_model_framework == "ollama"  # default
+    
+    def test_parse_review_models_with_spaces(self, monkeypatch):
+        """Test parsing model sequence with extra spaces."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", " phi4 , mistral-nemo , llama3.2 ")
+        
+        config = Config.load()
+        
+        assert config.review_models == ["phi4", "mistral-nemo", "llama3.2"]
+    
+    def test_parse_review_models_empty_string(self, monkeypatch):
+        """Test parsing empty review models string."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "")
+        
+        config = Config.load()
+        
+        assert config.review_models is None
+    
+    def test_parse_review_models_whitespace_only(self, monkeypatch):
+        """Test parsing whitespace-only review models string."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "   ")
+        
+        config = Config.load()
+        
+        assert config.review_models is None
+    
+    def test_parse_review_models_with_empty_entries(self, monkeypatch):
+        """Test parsing model sequence with empty entries fails validation."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,,mistral-nemo,")
+        
+        # Should fail validation due to empty entries
+        with pytest.raises(ConfigurationError):
+            Config.load()
+    
+    def test_review_model_framework_custom(self, monkeypatch):
+        """Test setting custom review model framework."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo")
+        monkeypatch.setenv("REVIEW_MODEL_FRAMEWORK", "auto")
+        
+        config = Config.load()
+        
+        assert config.review_model_framework == "auto"
+    
+    def test_get_model_for_review_pass_no_sequence(self, monkeypatch):
+        """Test getting model for review pass when no sequence configured."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("LOCAL_MODEL_NAME", "default-model")
+        
+        config = Config.load()
+        
+        # Should fall back to primary local model
+        assert config.get_model_for_review_pass(1) == "default-model"
+        assert config.get_model_for_review_pass(2) == "default-model"
+        assert config.get_model_for_review_pass(5) == "default-model"
+    
+    def test_get_model_for_review_pass_with_sequence(self, monkeypatch):
+        """Test getting model for review pass with configured sequence."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo,llama3.2")
+        
+        config = Config.load()
+        
+        # Test sequential selection
+        assert config.get_model_for_review_pass(1) == "phi4"
+        assert config.get_model_for_review_pass(2) == "mistral-nemo"
+        assert config.get_model_for_review_pass(3) == "llama3.2"
+    
+    def test_get_model_for_review_pass_cycling(self, monkeypatch):
+        """Test model cycling when more passes than models."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo")
+        
+        config = Config.load()
+        
+        # Test cycling behavior
+        assert config.get_model_for_review_pass(1) == "phi4"
+        assert config.get_model_for_review_pass(2) == "mistral-nemo"
+        assert config.get_model_for_review_pass(3) == "phi4"  # cycles back
+        assert config.get_model_for_review_pass(4) == "mistral-nemo"
+        assert config.get_model_for_review_pass(5) == "phi4"
+    
+    def test_get_model_for_review_pass_invalid_pass_number(self, monkeypatch):
+        """Test error handling for invalid pass numbers."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo")
+        
+        config = Config.load()
+        
+        with pytest.raises(ValueError) as exc_info:
+            config.get_model_for_review_pass(0)
+        
+        assert "Pass number must be at least 1" in str(exc_info.value)
+        
+        with pytest.raises(ValueError) as exc_info:
+            config.get_model_for_review_pass(-1)
+        
+        assert "Pass number must be at least 1" in str(exc_info.value)
+
+
+class TestMultiModelValidation:
+    """Tests for multi-model configuration validation."""
+    
+    def test_validate_empty_model_in_sequence(self, monkeypatch):
+        """Test validation fails when sequence contains empty model."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,,mistral-nemo")
+        
+        with pytest.raises(ConfigurationError) as exc_info:
+            Config.load()
+        
+        error_msg = str(exc_info.value)
+        assert "REVIEW_MODELS" in error_msg
+        assert "position 2" in error_msg
+        assert "cannot be empty" in error_msg
+    
+    def test_validate_duplicate_models_in_sequence(self, monkeypatch):
+        """Test validation fails when sequence contains duplicate models."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo,phi4")
+        
+        with pytest.raises(ConfigurationError) as exc_info:
+            Config.load()
+        
+        error_msg = str(exc_info.value)
+        assert "REVIEW_MODELS" in error_msg
+        assert "duplicate models" in error_msg
+    
+    def test_validate_invalid_review_model_framework(self, monkeypatch):
+        """Test validation fails with invalid review model framework."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo")
+        monkeypatch.setenv("REVIEW_MODEL_FRAMEWORK", "invalid_framework")
+        
+        with pytest.raises(ConfigurationError) as exc_info:
+            Config.load()
+        
+        error_msg = str(exc_info.value)
+        assert "REVIEW_MODEL_FRAMEWORK" in error_msg
+        assert "ollama" in error_msg
+        assert "auto" in error_msg
+    
+    def test_validate_too_many_models_in_sequence(self, monkeypatch):
+        """Test validation fails when sequence has too many models."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        # Create sequence with 11 models (exceeds limit of 10)
+        models = [f"model{i}" for i in range(1, 12)]
+        monkeypatch.setenv("REVIEW_MODELS", ",".join(models))
+        
+        with pytest.raises(ConfigurationError) as exc_info:
+            Config.load()
+        
+        error_msg = str(exc_info.value)
+        assert "REVIEW_MODELS" in error_msg
+        assert "maximum of 10 models" in error_msg
+    
+    def test_validate_valid_review_models_config(self, monkeypatch):
+        """Test validation passes with valid review models configuration."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo,llama3.2")
+        monkeypatch.setenv("REVIEW_MODEL_FRAMEWORK", "ollama")
+        
+        # Should not raise exception
+        config = Config.load()
+        assert config.review_models == ["phi4", "mistral-nemo", "llama3.2"]
+        assert config.review_model_framework == "ollama"
+
+
+class TestConfigurationValidationAndReporting:
+    """Tests for configuration validation and reporting functionality."""
+    
+    @patch('requests.get')
+    def test_validate_model_availability_ollama_service_running(self, mock_get, monkeypatch):
+        """Test model availability validation when Ollama service is running."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("AI_PROVIDER", "local")
+        monkeypatch.setenv("LOCAL_MODEL_NAME", "phi4")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo")
+        
+        # Mock successful Ollama API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "models": [
+                {"name": "phi4:latest"},
+                {"name": "mistral-nemo:latest"}
+            ]
+        }
+        mock_get.return_value = mock_response
+        
+        config = Config.load()
+        issues = config.validate_model_availability()
+        
+        # Should have no issues since all models are available
+        assert len(issues) == 0
+    
+    @patch('requests.get')
+    def test_validate_model_availability_missing_model(self, mock_get, monkeypatch):
+        """Test model availability validation when a model is missing."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("AI_PROVIDER", "local")
+        monkeypatch.setenv("LOCAL_MODEL_NAME", "phi4")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,missing-model")
+        
+        # Mock Ollama API response with only one model
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "models": [
+                {"name": "phi4:latest"}
+            ]
+        }
+        mock_get.return_value = mock_response
+        
+        config = Config.load()
+        issues = config.validate_model_availability()
+        
+        # Should have issue about missing model
+        assert len(issues) > 0
+        assert any("missing-model" in issue for issue in issues)
+        assert any("not found in Ollama" in issue for issue in issues)
+    
+    @patch('requests.get')
+    def test_validate_model_availability_ollama_service_down(self, mock_get, monkeypatch):
+        """Test model availability validation when Ollama service is down."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("AI_PROVIDER", "local")
+        monkeypatch.setenv("LOCAL_MODEL_NAME", "phi4")
+        
+        # Mock connection error
+        from requests.exceptions import RequestException
+        mock_get.side_effect = RequestException("Connection refused")
+        
+        config = Config.load()
+        issues = config.validate_model_availability()
+        
+        # Should have issue about service not running
+        assert len(issues) > 0
+        assert any("service not running" in issue.lower() or "not accessible" in issue.lower() for issue in issues)
+    
+    def test_validate_model_availability_fallback_api_key_missing(self, monkeypatch, tmp_path):
+        """Test validation detects missing API key when fallback is enabled."""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.setenv("AI_PROVIDER", "local")
+        monkeypatch.setenv("ENABLE_FALLBACK", "true")
+        
+        # Use non-existent env file to avoid loading project .env
+        non_existent_env = tmp_path / "nonexistent.env"
+        
+        # This should fail basic validation first, so we need to catch that
+        with pytest.raises(ConfigurationError):
+            Config.load(env_file=str(non_existent_env))
+        
+        # Test the model availability validation separately
+        # Create a config that passes basic validation but has fallback issues
+        monkeypatch.setenv("GEMINI_API_KEY", "")  # Empty but present
+        config = Config(
+            gemini_api_key="",
+            ai_provider="local",
+            enable_fallback=True,
+            local_model_name="phi4"
+        )
+        
+        issues = config.validate_model_availability()
+        
+        # Should have issue about missing API key for fallback
+        assert len(issues) > 0
+        assert any("GEMINI_API_KEY" in issue and "fallback" in issue for issue in issues)
+    
+    def test_get_configuration_status_basic(self, monkeypatch):
+        """Test basic configuration status reporting."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("AI_PROVIDER", "local")
+        monkeypatch.setenv("LOCAL_MODEL_NAME", "phi4")
+        monkeypatch.setenv("LOCAL_MODEL_FRAMEWORK", "auto")  # Explicitly set to auto
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo")
+        monkeypatch.setenv("ENABLE_FALLBACK", "true")
+        
+        config = Config.load()
+        status = config.get_configuration_status()
+        
+        # Check basic structure
+        assert "configuration_valid" in status
+        assert "validation_errors" in status
+        assert "validation_warnings" in status
+        assert "ai_providers" in status
+        assert "model_configuration" in status
+        assert "performance_settings" in status
+        assert "feature_flags" in status
+        assert "backward_compatibility" in status
+        
+        # Check AI provider configuration
+        ai_providers = status["ai_providers"]
+        assert ai_providers["primary_provider"] == "local"
+        assert ai_providers["fallback_enabled"] is True
+        assert ai_providers["local_model"]["name"] == "phi4"
+        assert ai_providers["local_model"]["framework"] == "auto"
+        assert ai_providers["gemini_configured"] is True
+        
+        # Check model configuration
+        model_config = status["model_configuration"]
+        assert model_config["review_models"]["enabled"] is True
+        assert model_config["review_models"]["count"] == 2
+        assert model_config["review_models"]["models"] == ["phi4", "mistral-nemo"]
+    
+    def test_get_configuration_status_legacy_config(self, monkeypatch):
+        """Test configuration status with legacy single-model configuration."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("AI_PROVIDER", "local")
+        monkeypatch.setenv("LOCAL_MODEL_NAME", "phi4")
+        monkeypatch.setenv("REVIEW_PASSES", "1")  # Explicitly set to 1 for legacy
+        # No REVIEW_MODELS set - legacy configuration
+        
+        config = Config.load()
+        status = config.get_configuration_status()
+        
+        # Check backward compatibility analysis
+        compat = status["backward_compatibility"]
+        assert compat["legacy_config_detected"] is True
+        assert any("legacy single-model configuration" in note for note in compat["compatibility_notes"])
+    
+    def test_analyze_backward_compatibility_deprecated_framework(self, monkeypatch):
+        """Test backward compatibility analysis detects deprecated settings."""
+        # Create config manually to test compatibility analysis
+        config = Config(
+            gemini_api_key="test_key",
+            ai_provider="local",
+            local_model_framework="transformers"  # Deprecated
+        )
+        
+        compat = config._analyze_backward_compatibility()
+        assert compat["migration_needed"] is True
+        assert any("DEPRECATED" in note for note in compat["compatibility_notes"])
+        assert any("transformers framework" in note for note in compat["compatibility_notes"])
+    
+    def test_print_configuration_status(self, monkeypatch, capsys):
+        """Test configuration status printing."""
+        monkeypatch.setenv("GEMINI_API_KEY", "test_key")
+        monkeypatch.setenv("AI_PROVIDER", "local")
+        monkeypatch.setenv("LOCAL_MODEL_NAME", "phi4")
+        monkeypatch.setenv("REVIEW_MODELS", "phi4,mistral-nemo")
+        
+        config = Config.load()
+        config.print_configuration_status()
+        
+        captured = capsys.readouterr()
+        output = captured.out
+        
+        # Check that key sections are present
+        assert "Configuration Status Report" in output
+        assert "AI Provider Configuration" in output
+        assert "Model Configuration" in output
+        assert "Performance Settings" in output
+        assert "Feature Flags" in output
+        
+        # Check specific values
+        assert "Primary: local" in output
+        assert "phi4" in output
+        assert "mistral-nemo" in output

@@ -49,8 +49,6 @@ def format_result(result: PipelineResult) -> str:
             lines.append(f"  Subtitles: {result.subtitle_file}")
         if result.output_mkv:
             lines.append(f"  Chaptered video: {result.output_mkv}")
-        if result.audio_chapters_file:
-            lines.append(f"  Audio chapters: {result.audio_chapters_file}")
         
         if result.chapters:
             lines.append("")
@@ -94,8 +92,6 @@ def format_result(result: PipelineResult) -> str:
                 lines.append(f"  Chapters: {result.chapters_file}")
             if result.notes_file:
                 lines.append(f"  Notes: {result.notes_file}")
-            if result.audio_chapters_file:
-                lines.append(f"  Audio chapters: {result.audio_chapters_file}")
         
         # Display warnings if any
         if result.warnings:

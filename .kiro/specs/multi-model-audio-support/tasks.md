@@ -46,6 +46,7 @@ This implementation plan adds sequential multi-model support for review passes a
   - Wire all components together
   - Ensure end-to-end functionality for both audio and video inputs
   - Verify backward compatibility with existing workflows
+  - Add automatic format conversion for problematic audio files
   - _Requirements: 5.1, 5.2, 5.4_
 
 ## Notes

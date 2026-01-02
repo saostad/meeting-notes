@@ -187,8 +187,28 @@ def run_pipeline(input_path: str, config: Config, progress_callback=None) -> Pip
                 result.audio_file = extractor.extract(input_path, str(audio_path))
         else:  # file_type == 'audio'
             # Use audio file directly, but validate it first
-            FileTypeDetector.validate_audio_file(input_path)
-            result.audio_file = input_path
+            print(f"   🔍 Validating audio file...")
+            audio_metadata = FileTypeDetector.validate_audio_file(input_path)
+            
+            if audio_metadata.get('needs_conversion', False):
+                # File needs conversion - convert it
+                try:
+                    converted_path = FileTypeDetector.convert_audio_file(input_path)
+                    result.audio_file = converted_path
+                    print(f"   ✓ Using converted audio file: {Path(converted_path).name}")
+                except RuntimeError as e:
+                    raise MeetingVideoChapterError(
+                        f"Failed to convert audio file: {input_path}",
+                        {
+                            "cause": str(e),
+                            "original_file": input_path,
+                            "suggestion": "Try converting the file manually with ffmpeg or use a different audio file"
+                        }
+                    )
+            else:
+                # File is valid, use directly
+                result.audio_file = input_path
+                print(f"   ✓ Audio file validated successfully")
             
         step_timings["audio_processing"] = time.time() - step_start_time
         if progress_callback:
@@ -211,8 +231,48 @@ def run_pipeline(input_path: str, config: Config, progress_callback=None) -> Pip
         else:
             # Initialize transcription service with model caching support (Requirement 7.5)
             transcription_service = TranscriptionService(model_name=config.whisper_model)
-            transcript = transcription_service.transcribe(result.audio_file, str(transcript_path))
-            result.transcript_file = str(transcript_path)
+            
+            # Try transcription with current audio file
+            try:
+                transcript = transcription_service.transcribe(result.audio_file, str(transcript_path))
+                result.transcript_file = str(transcript_path)
+            except Exception as transcription_error:
+                # Check if this is an audio format issue and we haven't tried conversion yet
+                if (file_type == 'audio' and 
+                    ("soundfile" in str(transcription_error).lower() or 
+                     "malformed" in str(transcription_error).lower() or
+                     "correct format" in str(transcription_error).lower()) and 
+                    not result.audio_file.endswith('_converted.mp3')):
+                    
+                    print(f"   ⚠️  Transcription failed with original file: {transcription_error}")
+                    print(f"   🔄 Attempting automatic format conversion...")
+                    
+                    try:
+                        # Force conversion even if validation passed
+                        converted_path = FileTypeDetector.convert_audio_file(input_path)
+                        result.audio_file = converted_path
+                        print(f"   ✓ Retrying transcription with converted file...")
+                        
+                        # Retry transcription with converted file
+                        transcript = transcription_service.transcribe(result.audio_file, str(transcript_path))
+                        result.transcript_file = str(transcript_path)
+                        print(f"   ✅ Transcription successful after conversion!")
+                        
+                    except Exception as conversion_error:
+                        # Both original and conversion failed
+                        raise MeetingVideoChapterError(
+                            f"Transcription failed with both original and converted audio files",
+                            {
+                                "original_error": str(transcription_error),
+                                "conversion_error": str(conversion_error),
+                                "original_file": input_path,
+                                "converted_file": result.audio_file,
+                                "suggestion": "The audio file may be corrupted or in an unsupported format. Try converting manually with ffmpeg."
+                            }
+                        )
+                else:
+                    # Re-raise original error if not an audio format issue
+                    raise transcription_error
         step_timings["transcription"] = time.time() - step_start_time
         if progress_callback:
             progress_callback(2, "Transcribing audio (this may take a while)", "complete")
@@ -249,15 +309,12 @@ def run_pipeline(input_path: str, config: Config, progress_callback=None) -> Pip
         
         # Step 4: Output Generation (conditional based on input type)
         step_start_time = time.time()
-        if progress_callback:
-            if file_type == 'video':
-                progress_callback(4, "Merging chapters into video", "start")
-            else:
-                progress_callback(4, "Generating audio outputs", "start")
-        
-        result.step_failed = "output generation"
-        
         if file_type == 'video':
+            if progress_callback:
+                progress_callback(4, "Merging chapters into video", "start")
+            
+            result.step_failed = "output generation"
+            
             # Generate chaptered video file
             output_mkv_path = output_dir / f"{input_file.stem}_chaptered.mkv"
             merger = ChapterMerger()
@@ -267,38 +324,15 @@ def run_pipeline(input_path: str, config: Config, progress_callback=None) -> Pip
                 str(output_mkv_path),
                 overlay_titles=config.overlay_chapter_titles
             )
-        else:  # file_type == 'audio'
-            # Generate audio-specific outputs (chapters file with metadata)
-            audio_chapters_path = output_dir / f"{input_file.stem}_audio_chapters.json"
             
-            # Create audio-specific chapters file with additional metadata
-            audio_chapters_data = {
-                "input_file": input_path,
-                "input_type": "audio",
-                "duration": getattr(chapters[-1], 'timestamp', 0) if chapters else 0,
-                "chapters": [
-                    {
-                        "timestamp": chapter.timestamp,
-                        "timestamp_formatted": f"{int(chapter.timestamp // 60):02d}:{int(chapter.timestamp % 60):02d}",
-                        "title": chapter.title
-                    }
-                    for chapter in chapters
-                ],
-                "total_chapters": len(chapters)
-            }
-            
-            with open(audio_chapters_path, 'w', encoding='utf-8') as f:
-                json.dump(audio_chapters_data, f, indent=2, ensure_ascii=False)
-            
-            result.audio_chapters_file = str(audio_chapters_path)
-        
-        step_timings["output_generation"] = time.time() - step_start_time
-        if progress_callback:
-            if file_type == 'video':
+            step_timings["output_generation"] = time.time() - step_start_time
+            if progress_callback:
                 progress_callback(4, "Merging chapters into video", "complete")
-            else:
-                progress_callback(4, "Generating audio outputs", "complete")
-        print(f"⏱️  Step 4 completed in {step_timings['output_generation']:.2f}s")
+            print(f"⏱️  Step 4 completed in {step_timings['output_generation']:.2f}s")
+        else:  # file_type == 'audio'
+            # For audio files, no additional output generation needed
+            # All necessary files (transcript, chapters, notes, subtitles) are already created
+            step_timings["output_generation"] = 0.0
         
         # Step 5: Generate Subtitle File
         # Generate SRT subtitle file from transcript for VLC and other players

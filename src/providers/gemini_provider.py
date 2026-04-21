@@ -155,6 +155,11 @@ class GeminiProvider(BaseAIProvider):
         # Parse the response
         chapters, notes = self._parse_response(response_text)
         
+        # Save raw response if requested
+        if save_raw_response:
+            with open(save_raw_response, 'w', encoding='utf-8') as f:
+                f.write(response_text)
+        
         # Save notes if requested (as JSON)
         if save_notes and notes:
             with open(save_notes, 'w', encoding='utf-8') as f:

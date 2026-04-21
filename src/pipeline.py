@@ -284,13 +284,30 @@ def run_pipeline(input_path: str, config: Config, progress_callback=None) -> Pip
             progress_callback(3, "Identifying chapters", "start")
         result.step_failed = "chapter identification"
         if config.skip_existing and chapters_raw_path.exists():
-            # Reuse existing chapters file (Requirement 7.3)
-            chapters = _load_existing_chapters(str(chapters_raw_path))
-            result.chapters = chapters
-            result.chapters_file = str(chapters_raw_path)
-            if notes_path.exists():
-                result.notes_file = str(notes_path)
-            warnings.append(f"Reusing existing chapters file: {chapters_raw_path}")
+            # Check for existing chapters JSON file first
+            chapters_json_path = output_dir / f"{input_file.stem}_chapters.json"
+            if chapters_json_path.exists():
+                # Reuse existing chapters JSON file (Requirement 7.3)
+                chapters = _load_existing_chapters(str(chapters_json_path))
+                result.chapters = chapters
+                result.chapters_file = str(chapters_json_path)
+                if notes_path.exists():
+                    result.notes_file = str(notes_path)
+                warnings.append(f"Reusing existing chapters file: {chapters_json_path}")
+            else:
+                # Try to load from old format (raw file)
+                try:
+                    chapters = _load_existing_chapters(str(chapters_raw_path))
+                    result.chapters = chapters
+                    result.chapters_file = str(chapters_raw_path)
+                    if notes_path.exists():
+                        result.notes_file = str(notes_path)
+                    warnings.append(f"Reusing existing chapters file: {chapters_raw_path}")
+                except MeetingVideoChapterError:
+                    # Raw file exists but can't be parsed as JSON, regenerate
+                    warnings.append(f"Existing chapters file is not valid JSON, regenerating: {chapters_raw_path}")
+                    # Fall through to regenerate chapters
+                    config.skip_existing = False
         else:
             analyzer = ChapterAnalyzer(config)
             chapters = analyzer.analyze(
@@ -298,8 +315,27 @@ def run_pipeline(input_path: str, config: Config, progress_callback=None) -> Pip
                 save_raw_response=str(chapters_raw_path),
                 save_notes=str(notes_path)
             )
+            
+            # Save parsed chapters as JSON for future reuse
+            chapters_data = {
+                "chapters": [
+                    {
+                        "timestamp_original": chapter.timestamp,
+                        "timestamp_in_minutes": chapter.timestamp / 60.0,
+                        "title": chapter.title
+                    }
+                    for chapter in chapters
+                ],
+                "notes": []  # Notes are saved separately
+            }
+            
+            # Create a separate JSON file for parsed chapters
+            chapters_json_path = output_dir / f"{input_file.stem}_chapters.json"
+            with open(chapters_json_path, 'w', encoding='utf-8') as f:
+                json.dump(chapters_data, f, indent=2, ensure_ascii=False)
+            
             result.chapters = chapters
-            result.chapters_file = str(chapters_raw_path)
+            result.chapters_file = str(chapters_json_path)
             if notes_path.exists():
                 result.notes_file = str(notes_path)
         step_timings["chapter_identification"] = time.time() - step_start_time
